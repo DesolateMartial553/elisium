@@ -16,7 +16,8 @@ Workflow: OpenCode implements one brief from `briefs/`; Claude audits the diff a
 - Phase 2D: DONE (tray, notifications via freedesktop, a11y pass, public queue.probe; 391 tests). Sonnet subagent, corrected mid-task for Hyprland. NOT verified: Orca, real tray/dunst, owner theme contrast.
 - Real-session smoke test DONE 2026-11-13: app runs natively on Wayland (not XWayland), window opens, themed by HyDE, no errors. Found + fixed narrow-tile clipping (low-priority columns now hide). Not yet tried: a real download from the GUI, real tray in waybar, dunst notification.
 - RENAMED 2026-11-13 (user): app is now "Elisium" (no "Downloader"): window title, command `elisium`, app_id `elisium`, data ~/.local/share/elisium, cache ~/.cache/elisium, output ~/Downloads/Elisium. Python package stays elisium_downloader, repo folder stays elisium-downloader. Launcher (user space): ~/.local/bin/elisium (dev wrapper), ~/.local/share/applications/elisium.desktop, icon elisium.svg; copies in desktop/packaging/.
-- Next: Phase 3 integration (elisium:// handler, CLI add, browser ext), Phase 4 packaging, Phase 5 Android.
+- ANDROID 5A DONE 2026-11-13: android/ scaffold builds debug APK (72 MB, arm64-v8a only, package com.desolate.elisium, AGP 9.5.1, Kotlin 2.4.21, compileSdk 37, youtubedl-android 0.18.1). Build: JAVA_HOME=/usr/lib/jvm/java-21-openjdk nice gradle --no-daemon --max-workers=1 :app:assembleDebug (first build OOM-killed once; retry works). UNVERIFIED on a device: engine start. Copy at ~/Downloads/Elisium-debug-0.1.0.apk. TODO: allowBackup=false before release (cookies).
+- Next: Android 5B (Kotlin engine port) then 5C-5E; desktop Phase 3 integration (elisium:// handler, CLI add, browser ext), Phase 4 packaging, Phase 5 Android.
 
 ## Log
 | Brief | Implemented by | Audit | Notes |
