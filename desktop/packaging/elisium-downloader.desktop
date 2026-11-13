@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Elisium Downloader
+GenericName=Video Downloader
+Comment=Download videos with yt-dlp
+Exec=elisium-downloader
+Icon=elisium-downloader
+Terminal=false
+Categories=AudioVideo;Video;
+Keywords=video;download;yt-dlp;youtube;audio;
+StartupWMClass=elisium-downloader

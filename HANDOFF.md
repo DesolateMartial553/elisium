@@ -15,6 +15,7 @@ Workflow: OpenCode implements one brief from `briefs/`; Claude audits the diff a
 - Phase 2C: DONE (Options button, Choose-quality dialog with exact-format table, playlist picker with ranges; 321 tests). Sonnet subagent. Review notes: default probe uses queue._probe_url/_ytdlp via getattr (make public in 2D); unticked checkboxes faint on dark offscreen theme (check under Breeze).
 - Phase 2D: DONE (tray, notifications via freedesktop, a11y pass, public queue.probe; 391 tests). Sonnet subagent, corrected mid-task for Hyprland. NOT verified: Orca, real tray/dunst, owner theme contrast.
 - Real-session smoke test DONE 2026-11-13: app runs natively on Wayland (not XWayland), window opens, themed by HyDE, no errors. Found + fixed narrow-tile clipping (low-priority columns now hide). Not yet tried: a real download from the GUI, real tray in waybar, dunst notification.
+- Launcher installed 2026-11-13 (user space, no sudo): ~/.local/bin/elisium-downloader (dev wrapper using the project venv), ~/.local/share/applications/elisium-downloader.desktop, icon ~/.local/share/icons/hicolor/scalable/apps/elisium-downloader.svg; copies in desktop/packaging/. Window app_id = elisium-downloader.
 - Next: Phase 3 integration (elisium:// handler, CLI add, browser ext), Phase 4 packaging, Phase 5 Android.
 
 ## Log
