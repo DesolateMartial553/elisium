@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -25,6 +26,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QListWidget,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -32,6 +34,7 @@ from PySide6.QtWidgets import (
     QStyle,
     QStyledItemDelegate,
     QStyleOptionProgressBar,
+    QStackedWidget,
     QStyleOptionViewItem,
     QTableView,
     QToolBar,
@@ -42,6 +45,9 @@ from PySide6.QtWidgets import (
 from elisium_downloader.engine.queue import DownloadQueue
 
 from .bridge import QueueBridge
+from .history_page import HistoryPage
+from .settings import Settings
+from .settings_page import SettingsPage
 from .model import COL_PROGRESS, COL_TITLE, COLUMNS, PERCENT_ROLE, DownloadModel
 
 __all__ = ["MainWindow", "ProgressDelegate", "extract_urls"]
@@ -51,6 +57,7 @@ CANCELLABLE = frozenset(
     {"queued", "probing", "downloading", "merging", "converting", "paused"}
 )
 RETRYABLE = frozenset({"failed", "cancelled"})
+SECTIONS = ("Downloads", "History", "Settings")
 ACTIVE = frozenset({"probing", "downloading", "merging", "converting"})
 
 SHORTCUTS = (
@@ -58,6 +65,7 @@ SHORTCUTS = (
     ("Ctrl+V", "Paste and add links (when the list is focused)"),
     ("Enter", "Add the link in the box"),
     ("Space", "Pause or resume the selected download"),
+    ("Ctrl+1 / Ctrl+2 / Ctrl+3", "Go to Downloads, History or Settings"),
     ("Ctrl+Q", "Quit"),
     ("F1", "Show this list"),
 )
@@ -126,9 +134,16 @@ class MainWindow(QMainWindow):
         queue: DownloadQueue,
         bridge: QueueBridge | None = None,
         parent: QWidget | None = None,
+        *,
+        settings: Settings | None = None,
+        settings_path: str | Path | None = None,
+        version_fn: Callable[[], str | None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.queue = queue
+        self.settings = settings or Settings()
+        self._settings_path = settings_path
+        self._version_fn = version_fn
         self.setWindowTitle("Elisium Downloader")
         self.resize(900, 520)
 
@@ -145,8 +160,8 @@ class MainWindow(QMainWindow):
 
     # -- construction ----------------------------------------------------
     def _build_ui(self) -> None:
-        central = QWidget(self)
-        layout = QVBoxLayout(central)
+        downloads_page = QWidget(self)
+        layout = QVBoxLayout(downloads_page)
 
         row = QHBoxLayout()
         self.url_edit = QLineEdit()
@@ -193,6 +208,31 @@ class MainWindow(QMainWindow):
         for column, width in zip(range(1, len(COLUMNS)), (130, 150, 90, 70, 90), strict=True):
             self.table.setColumnWidth(column, width)
         layout.addWidget(self.table, 1)
+
+        self.history_page = HistoryPage(self.queue, self.bridge)
+        self.settings_page = SettingsPage(
+            self.settings, self.queue, self._settings_path, self._version_fn
+        )
+        self.settings_page.settingsChanged.connect(self._on_settings_changed)
+        self.stack = QStackedWidget()
+        for page in (downloads_page, self.history_page, self.settings_page):
+            self.stack.addWidget(page)
+
+        self.sidebar = QListWidget()
+        self.sidebar.setAccessibleName("Sections")
+        self.sidebar.setAccessibleDescription(
+            "Switch between Downloads, History and Settings with the arrow keys."
+        )
+        self.sidebar.setFixedWidth(150)
+        for name in SECTIONS:
+            self.sidebar.addItem(name)
+        self.sidebar.setCurrentRow(0)
+        self.sidebar.currentRowChanged.connect(self.show_section)
+
+        central = QWidget(self)
+        outer = QHBoxLayout(central)
+        outer.addWidget(self.sidebar)
+        outer.addWidget(self.stack, 1)
         self.setCentralWidget(central)
 
         self.summary_label = QLabel()
@@ -268,6 +308,10 @@ class MainWindow(QMainWindow):
 
         window = Qt.ShortcutContext.WindowShortcut
         own = Qt.ShortcutContext.WidgetShortcut
+        self._section_shortcuts = [
+            shortcut(f"Ctrl+{n}", lambda n=n: self.show_section(n - 1), self, window)
+            for n in (1, 2, 3)
+        ]
         self._shortcuts = [
             shortcut("Ctrl+V", self.paste_from_clipboard, self.table, own),
             shortcut("Space", self.toggle_pause_resume, self.table, own),
@@ -288,10 +332,35 @@ class MainWindow(QMainWindow):
         for first, second in zip(widgets, widgets[1:]):
             QWidget.setTabOrder(first, second)
 
+    # -- sections --------------------------------------------------------
+    def show_section(self, index: int) -> None:
+        """Show page *index* (0 Downloads, 1 History, 2 Settings)."""
+        if not 0 <= index < self.stack.count():
+            return
+        self.stack.setCurrentIndex(index)
+        if self.sidebar.currentRow() != index:
+            self.sidebar.setCurrentRow(index)
+        self.toolbar.setVisible(index == 0)
+        if index == 1:
+            self.history_page.refresh()
+
+    def _on_settings_changed(self, settings: Settings) -> None:
+        self.settings = settings
+
     # -- model feed ------------------------------------------------------
     def _on_event(self, event: dict[str, Any]) -> None:
         self.model.handle_event(event)
         self._refresh_ui()
+        item = event.get("item")
+        if (
+            self.settings.notify_on_done
+            and event.get("type") == "state"
+            and isinstance(item, dict)
+            and item.get("state") == "done"
+        ):
+            self.statusBar().showMessage(
+                f"Finished: {item.get('title') or item.get('url')}", 8000
+            )
 
     def _refresh_ui(self) -> None:
         self._update_summary()

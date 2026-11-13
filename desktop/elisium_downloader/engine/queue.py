@@ -27,7 +27,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 from . import runner
 from .archive import Archive, _file_exists, reconcile
@@ -200,6 +200,7 @@ class DownloadQueue:
         self._ytdlp = ytdlp
         self._format_selector = format_selector
         self._limit_rate = limit_rate
+        self._extra_args: tuple[str, ...] = ()
         self._sleep = sleep
         self._run_download = run_download
         self._probe_url = probe_url
@@ -231,6 +232,27 @@ class DownloadQueue:
         with self._cond:
             self._concurrency = checked
             self._cond.notify_all()
+
+    def set_limit_rate(self, value: str | None) -> None:
+        """Set ``--limit-rate`` (e.g. ``"2M"``; ``None`` for no limit).
+
+        Applies to downloads that START after this call; running ones keep
+        their old value.
+        """
+        with self._cond:
+            self._limit_rate = value or None
+
+    def set_format_selector(self, selector: str) -> None:
+        """Set the yt-dlp ``-f`` selector for downloads that start after this call."""
+        if not isinstance(selector, str) or not selector:
+            raise ValueError("format selector must be a non-empty string")
+        with self._cond:
+            self._format_selector = selector
+
+    def set_extra_args(self, args: Sequence[str]) -> None:
+        """Set extra yt-dlp arguments for downloads that start after this call."""
+        with self._cond:
+            self._extra_args = tuple(str(a) for a in args)
 
     def add_listener(self, callback: Callable[[dict[str, Any]], None]) -> None:
         with self._lock:
@@ -682,13 +704,18 @@ class DownloadQueue:
             path_file.unlink(missing_ok=True)
         except OSError:
             pass
+        with self._cond:
+            selector = self._format_selector
+            limit = self._limit_rate
+            extra = self._extra_args
         opts = runner.DownloadOptions(
             url=item.url,
             output_dir=self.output_dir,
             temp_dir=self.temp_dir,
             archive_path=self.archive.path,
-            format_selector=self._format_selector,
-            limit_rate=self._limit_rate,
+            format_selector=selector,
+            limit_rate=limit,
+            extra_args=extra,
             ytdlp=self._ytdlp,
             path_file=path_file,
         )

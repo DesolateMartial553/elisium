@@ -16,7 +16,7 @@ from conftest import make_snapshot
 
 @pytest.fixture
 def window(qapp, ui_queue):
-    win = MainWindow(ui_queue)
+    win = MainWindow(ui_queue, version_fn=lambda: "test")
     yield win
     win.bridge.close()
     win.deleteLater()
@@ -213,7 +213,7 @@ def test_tab_order_and_shortcuts(window) -> None:
 
 
 def test_create_app_with_injected_queue(qapp, ui_queue) -> None:
-    app, win, queue = create_app([], queue=ui_queue)
+    app, win, queue = create_app([], queue=ui_queue, version_fn=lambda: "test")
     assert queue is ui_queue and win.queue is ui_queue
     assert app is qapp
     win.bridge.close()
@@ -225,6 +225,8 @@ def test_create_app_builds_in_injected_dirs(qapp, tmp_path) -> None:
         data_path=tmp_path / "d",
         output_path=tmp_path / "o",
         temp_path=tmp_path / "t",
+        settings_path=tmp_path / "cfg" / "settings.json",
+        version_fn=lambda: "test",
     )
     try:
         assert (tmp_path / "d" / "history.sqlite").exists()

@@ -789,3 +789,35 @@ def test_non_youtube_archive_key_comes_from_the_probe(harness) -> None:
     assert h.queue.wait_until_idle(15)
     assert h.queue.item(item["id"])["state"] == "done"
     assert not h.archive.has("generic", "clip")
+
+
+# -- runtime setters (apply to downloads that start afterwards) -----------
+def test_setters_apply_to_next_started_download(harness) -> None:
+    seen: list = []
+
+    def fake_run(opts, on_event):
+        seen.append(opts)
+        return FakeHandle()
+
+    h = harness(probe_url=lambda url, ytdlp="yt-dlp": {"title": "T"}, run_download=fake_run)
+    h.queue.set_limit_rate("2M")
+    h.queue.set_format_selector("wv*+wa/w")
+    h.queue.set_extra_args(["-x", "--audio-format", "mp3"])
+    h.queue.add("https://vimeo.com/1")
+    h.queue.start()
+    assert h.queue.wait_until_idle(15)
+    assert seen[0].limit_rate == "2M"
+    assert seen[0].format_selector == "wv*+wa/w"
+    assert tuple(seen[0].extra_args) == ("-x", "--audio-format", "mp3")
+
+    h.queue.set_limit_rate(None)
+    h.queue.set_extra_args([])
+    h.queue.add("https://vimeo.com/2")
+    assert h.queue.wait_until_idle(15)
+    assert seen[1].limit_rate is None
+    assert tuple(seen[1].extra_args) == ()
+
+
+def test_set_format_selector_rejects_empty(harness) -> None:
+    with pytest.raises(ValueError):
+        harness().queue.set_format_selector("")
