@@ -1,0 +1,16 @@
+# Elisium Downloader - rules for the coding agent
+
+A yt-dlp front end for Arch Linux (PySide6/Qt6) and Android (Kotlin/Compose). You implement one brief at a time from `briefs/`. Claude audits every diff.
+
+## Hard rules
+- Read `core-spec/SPEC.md` first. It is the source of truth for queue states, dedupe, output folder and error mapping.
+- Only edit files named in the brief. If you need another file, stop and say why.
+- Never run `sudo`, `git push`, `rm -rf`, or install system packages. Report what is missing instead.
+- Machine is 2 cores / 7.6 GB. Run builds and tests with `nice`. No Android emulator. Gradle: `--offline --max-workers=1 -Dorg.gradle.jvmargs=-Xmx1g`.
+- No network calls in tests, except tests marked `@pytest.mark.live` (skipped by default).
+- No analytics, telemetry, or hard-coded cookies/credentials.
+- Python 3.11+, type hints, stdlib + PySide6 only for the desktop app (no new dependencies without asking).
+- Write tests with the code. A brief is not done until its acceptance checks pass; paste the command output.
+
+## Output contract
+When finished, write a short `briefs/<brief>.result.md`: files changed, commands run with pass/fail, anything unfinished. Do not claim a check passed unless you ran it.
