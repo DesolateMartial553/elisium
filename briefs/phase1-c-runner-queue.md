@@ -18,3 +18,7 @@ Read `AGENTS.md`, `core-spec/SPEC.md`, and the 1A/1B modules.
 
 ## Do not
 Import PySide6, add dependencies, or run the live test unless told.
+
+## Added after audit of 1B
+- `Archive.add/remove` rewrite the whole file, and a running yt-dlp may append to it at the same time (lost update). In `queue.py` serialise every Archive call and archive reconcile behind one `threading.Lock`, and never call `archive.remove` while any item is in `downloading`/`merging`/`converting`. Add a test for this.
+- Non-YouTube sites: dedupe identity falls back to `normalize_url(url)` (see above).
