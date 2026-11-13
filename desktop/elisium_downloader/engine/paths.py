@@ -22,8 +22,8 @@ __all__ = [
     "cache_dir",
 ]
 
-APP_DIR_NAME = "elisium-downloader"
-OUTPUT_DIR_NAME = "Elisium Downloader"
+APP_DIR_NAME = "elisium"
+OUTPUT_DIR_NAME = "Elisium"
 
 
 def _environment(env: Mapping[str, str] | None) -> dict[str, str]:
@@ -87,7 +87,7 @@ def output_dir(
     home: str | os.PathLike[str] | None = None,
     create: bool = False,
 ) -> Path:
-    """``<download folder>/Elisium Downloader``."""
+    """``<download folder>/Elisium``."""
     environment = _environment(env)
     home_path = _home(environment, home)
     # When the caller supplies an env, it is a test override: never probe the
@@ -124,7 +124,7 @@ def config_dir(
     home: str | os.PathLike[str] | None = None,
     create: bool = False,
 ) -> Path:
-    """``~/.config/elisium-downloader`` (or ``$XDG_CONFIG_HOME``)."""
+    """``~/.config/elisium`` (or ``$XDG_CONFIG_HOME``)."""
     environment = _environment(env)
     home_path = _home(environment, home)
     base = _xdg_path(environment, "XDG_CONFIG_HOME", home_path / ".config", home_path)
@@ -137,7 +137,7 @@ def data_dir(
     home: str | os.PathLike[str] | None = None,
     create: bool = False,
 ) -> Path:
-    """``~/.local/share/elisium-downloader`` (history.sqlite, archive.txt)."""
+    """``~/.local/share/elisium`` (history.sqlite, archive.txt)."""
     environment = _environment(env)
     home_path = _home(environment, home)
     base = _xdg_path(
@@ -152,7 +152,7 @@ def cache_dir(
     home: str | os.PathLike[str] | None = None,
     create: bool = False,
 ) -> Path:
-    """``~/.cache/elisium-downloader`` (or ``$XDG_CACHE_HOME``)."""
+    """``~/.cache/elisium`` (or ``$XDG_CACHE_HOME``)."""
     environment = _environment(env)
     home_path = _home(environment, home)
     base = _xdg_path(environment, "XDG_CACHE_HOME", home_path / ".cache", home_path)

@@ -19,7 +19,7 @@ __all__ = [
 ]
 
 MIN_NOTIFY_GAP = 1.0  # seconds between two desktop notifications
-STILL_RUNNING_TEXT = "Elisium Downloader is still running here"
+STILL_RUNNING_TEXT = "Elisium is still running here"
 _NOTIFY_MS = 6000
 
 
@@ -153,7 +153,7 @@ class TrayController(QObject):
             return
         self._hint_shown = True
         self._last_sent = self._clock()
-        self._notifier("Elisium Downloader", STILL_RUNNING_TEXT)
+        self._notifier("Elisium", STILL_RUNNING_TEXT)
 
     # -- notifications ---------------------------------------------------
     def on_event(self, event: dict[str, Any]) -> None:

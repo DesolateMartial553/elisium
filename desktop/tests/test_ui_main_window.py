@@ -27,7 +27,7 @@ def pump() -> None:
 
 
 def test_title_and_accessible_names(window) -> None:
-    assert window.windowTitle() == "Elisium Downloader"
+    assert window.windowTitle() == "Elisium"
     assert window.url_edit.placeholderText() == "Paste a video link"
     for widget in (window.url_edit, window.paste_button, window.add_button, window.table, window.toolbar):
         assert widget.accessibleName()

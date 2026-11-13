@@ -1,4 +1,4 @@
-# Elisium Downloader - rules for the coding agent
+# Elisium - rules for the coding agent
 
 A yt-dlp front end for Arch Linux (PySide6/Qt6) and Android (Kotlin/Compose). You implement one brief at a time from `briefs/`. Claude audits every diff.
 

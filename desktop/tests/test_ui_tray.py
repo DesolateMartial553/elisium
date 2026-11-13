@@ -169,7 +169,7 @@ def test_close_to_tray_hides_and_keeps_downloading(env, monkeypatch) -> None:
     assert env.window.close() is False
     assert not env.window.isVisible()
     assert env.queue.item(item["id"])["state"] == "downloading"
-    assert env.fake.messages == [("Elisium Downloader", STILL_RUNNING_TEXT)]
+    assert env.fake.messages == [("Elisium", STILL_RUNNING_TEXT)]
     assert env.quits == []
     # Second time: no repeat of the hint.
     env.window.show()

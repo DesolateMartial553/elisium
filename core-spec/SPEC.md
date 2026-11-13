@@ -1,4 +1,4 @@
-# Elisium Downloader - core spec (both apps follow this)
+# Elisium - core spec (both apps follow this)
 
 ## Queue item states
 `queued -> probing -> downloading -> merging -> converting -> done`
@@ -20,11 +20,11 @@ Terminal states: `done`, `failed`, `skipped`, `cancelled`. Also `paused` (resuma
 - Same video, different quality: default skip with a "Download again anyway" action. Setting: skip | replace | keep both.
 
 ## Output location
-- Desktop: final files go to `~/Downloads/Elisium Downloader/` (use `xdg-user-dir DOWNLOAD`, fall back to `~/Downloads`). yt-dlp flags: `-P home:<that>` and `-P temp:<cache>/tmp`, so the output folder holds only finished files, never `.part`.
-- Android: stage in app-private storage, move finished file to `Download/Elisium Downloader/` via MediaStore.
+- Desktop: final files go to `~/Downloads/Elisium/` (use `xdg-user-dir DOWNLOAD`, fall back to `~/Downloads`). yt-dlp flags: `-P home:<that>` and `-P temp:<cache>/tmp`, so the output folder holds only finished files, never `.part`.
+- Android: stage in app-private storage, move finished file to `Download/Elisium/` via MediaStore.
 
 ## Data locations (desktop)
-- Config `~/.config/elisium-downloader/`, data `~/.local/share/elisium-downloader/` (history.sqlite, archive.txt), cache `~/.cache/elisium-downloader/`.
+- Config `~/.config/elisium/`, data `~/.local/share/elisium/` (history.sqlite, archive.txt), cache `~/.cache/elisium/`.
 
 ## Format presets
 Best video, 1080p, 720p, Audio only (mp3, m4a, opus, flac), Smallest file. Default selector `bestvideo*+bestaudio/best`.

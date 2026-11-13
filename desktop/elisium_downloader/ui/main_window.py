@@ -316,7 +316,7 @@ class MainWindow(QMainWindow):
         self.settings = settings or Settings()
         self._settings_path = settings_path
         self._version_fn = version_fn
-        self.setWindowTitle("Elisium Downloader")
+        self.setWindowTitle("Elisium")
         self.resize(900, 520)
 
         self.bridge = bridge or QueueBridge(queue, self)

@@ -1,4 +1,4 @@
-# Elisium Downloader - handoff
+# Elisium - handoff
 
 Plan: `~/.claude/plans/lets-start-preparing-with-snazzy-koala.md`. Spec: `core-spec/SPEC.md`. Agent rules: `AGENTS.md`.
 
@@ -6,7 +6,7 @@ Workflow: OpenCode implements one brief from `briefs/`; Claude audits the diff a
 
 ## Status
 - Phase 0 prep: done (folder, AGENTS.md, SPEC.md, briefs 1A-1C).
-- Phase 1A: DONE, audited (41 tests pass, re-run by Claude; urlnorm/errors/paths read and spot-checked). Note: xdg-user-dir returns $HOME when DOWNLOAD is unset, which would give ~/Elisium Downloader; handle in a later brief.
+- Phase 1A: DONE, audited (41 tests pass, re-run by Claude; urlnorm/errors/paths read and spot-checked). Note: xdg-user-dir returns $HOME when DOWNLOAD is unset, which would give ~/Elisium; handle in a later brief.
 - Phase 1B: DONE, audited (107 tests pass; archive/history read). Concern moved to 1C: archive lost-update race with yt-dlp appends.
 - Phase 1C: DONE, audited (161 pass; real-yt-dlp end-to-end run OK: 3 URL forms -> 1 item, 1 file, empty temp, archive written, restart makes no copy). Gaps -> brief 1D: same-session re-add after delete, file_path for non-YouTube, silent archive skip reported as done, "converting" shown for MoveFiles.
 - Phase 1D: DONE, audited by Claude (175 pass, 1 skipped; own real-yt-dlp e2e run OK: file_path set for non-YouTube, restart => skipped, no "converting" for plain downloads). OpenCode hit its free usage limit mid-task; finished by a Sonnet subagent (user-approved fallback). ENGINE COMPLETE.
@@ -15,7 +15,7 @@ Workflow: OpenCode implements one brief from `briefs/`; Claude audits the diff a
 - Phase 2C: DONE (Options button, Choose-quality dialog with exact-format table, playlist picker with ranges; 321 tests). Sonnet subagent. Review notes: default probe uses queue._probe_url/_ytdlp via getattr (make public in 2D); unticked checkboxes faint on dark offscreen theme (check under Breeze).
 - Phase 2D: DONE (tray, notifications via freedesktop, a11y pass, public queue.probe; 391 tests). Sonnet subagent, corrected mid-task for Hyprland. NOT verified: Orca, real tray/dunst, owner theme contrast.
 - Real-session smoke test DONE 2026-11-13: app runs natively on Wayland (not XWayland), window opens, themed by HyDE, no errors. Found + fixed narrow-tile clipping (low-priority columns now hide). Not yet tried: a real download from the GUI, real tray in waybar, dunst notification.
-- Launcher installed 2026-11-13 (user space, no sudo): ~/.local/bin/elisium-downloader (dev wrapper using the project venv), ~/.local/share/applications/elisium-downloader.desktop, icon ~/.local/share/icons/hicolor/scalable/apps/elisium-downloader.svg; copies in desktop/packaging/. Window app_id = elisium-downloader.
+- RENAMED 2026-11-13 (user): app is now "Elisium" (no "Downloader"): window title, command `elisium`, app_id `elisium`, data ~/.local/share/elisium, cache ~/.cache/elisium, output ~/Downloads/Elisium. Python package stays elisium_downloader, repo folder stays elisium-downloader. Launcher (user space): ~/.local/bin/elisium (dev wrapper), ~/.local/share/applications/elisium.desktop, icon elisium.svg; copies in desktop/packaging/.
 - Next: Phase 3 integration (elisium:// handler, CLI add, browser ext), Phase 4 packaging, Phase 5 Android.
 
 ## Log

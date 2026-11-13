@@ -1,1 +1,1 @@
-"""PySide6 (QtWidgets) front end for the Elisium Downloader engine."""
+"""PySide6 (QtWidgets) front end for the Elisium engine."""

@@ -38,10 +38,10 @@ def create_app(
     else the real XDG ones) and the queue is started.
     """
     app = QApplication.instance() or QApplication(list(argv if argv is not None else sys.argv))
-    app.setApplicationName("Elisium Downloader")
+    app.setApplicationName("Elisium")
     # On Wayland this becomes the window's app_id, so the launcher entry,
-    # icon and Hyprland window rules match "elisium-downloader".
-    app.setDesktopFileName("elisium-downloader")
+    # icon and Hyprland window rules match "elisium".
+    app.setDesktopFileName("elisium")
     injected = queue is not None
     if queue is None:
         data = Path(data_path) if data_path else paths.data_dir(create=True)

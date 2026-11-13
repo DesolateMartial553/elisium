@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "elisium_downloader"
 version = "0.1.0"
-description = "Desktop front end for yt-dlp (Elisium Downloader)"
+description = "Desktop front end for yt-dlp (Elisium)"
 requires-python = ">=3.11"
 dependencies = ["PySide6"]
 
@@ -13,7 +13,7 @@ dependencies = ["PySide6"]
 dev = ["pytest>=7"]
 
 [project.scripts]
-elisium-downloader = "elisium_downloader.cli:main"
+elisium = "elisium_downloader.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["elisium_downloader*"]

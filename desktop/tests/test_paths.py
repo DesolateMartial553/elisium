@@ -13,11 +13,11 @@ def test_default_locations_use_home_override(tmp_path: Path) -> None:
     home = tmp_path / "home"
     env = _env(home)
 
-    assert paths.config_dir(env=env) == home / ".config" / "elisium-downloader"
-    assert paths.data_dir(env=env) == home / ".local" / "share" / "elisium-downloader"
-    assert paths.cache_dir(env=env) == home / ".cache" / "elisium-downloader"
-    assert paths.temp_dir(env=env) == home / ".cache" / "elisium-downloader" / "tmp"
-    assert paths.output_dir(env=env) == home / "Downloads" / "Elisium Downloader"
+    assert paths.config_dir(env=env) == home / ".config" / "elisium"
+    assert paths.data_dir(env=env) == home / ".local" / "share" / "elisium"
+    assert paths.cache_dir(env=env) == home / ".cache" / "elisium"
+    assert paths.temp_dir(env=env) == home / ".cache" / "elisium" / "tmp"
+    assert paths.output_dir(env=env) == home / "Downloads" / "Elisium"
 
 
 def test_xdg_overrides_are_honoured(tmp_path: Path) -> None:
@@ -31,17 +31,17 @@ def test_xdg_overrides_are_honoured(tmp_path: Path) -> None:
         XDG_DOWNLOAD_DIR=str(xdg / "downloads"),
     )
 
-    assert paths.config_dir(env=env) == xdg / "config" / "elisium-downloader"
-    assert paths.data_dir(env=env) == xdg / "data" / "elisium-downloader"
-    assert paths.cache_dir(env=env) == xdg / "cache" / "elisium-downloader"
-    assert paths.temp_dir(env=env) == xdg / "cache" / "elisium-downloader" / "tmp"
-    assert paths.output_dir(env=env) == xdg / "downloads" / "Elisium Downloader"
+    assert paths.config_dir(env=env) == xdg / "config" / "elisium"
+    assert paths.data_dir(env=env) == xdg / "data" / "elisium"
+    assert paths.cache_dir(env=env) == xdg / "cache" / "elisium"
+    assert paths.temp_dir(env=env) == xdg / "cache" / "elisium" / "tmp"
+    assert paths.output_dir(env=env) == xdg / "downloads" / "Elisium"
 
 
 def test_xdg_download_dir_expands_home(tmp_path: Path) -> None:
     home = tmp_path / "home"
     env = _env(home, XDG_DOWNLOAD_DIR="$HOME/My Downloads")
-    assert paths.output_dir(env=env) == home / "My Downloads" / "Elisium Downloader"
+    assert paths.output_dir(env=env) == home / "My Downloads" / "Elisium"
 
 
 def test_directories_are_only_created_with_create_true(tmp_path: Path) -> None:
@@ -68,7 +68,7 @@ def test_directories_are_only_created_with_create_true(tmp_path: Path) -> None:
 def test_explicit_home_argument_wins_over_env(tmp_path: Path) -> None:
     env = {"HOME": str(tmp_path / "ignored")}
     home = tmp_path / "actual"
-    assert paths.config_dir(env=env, home=home) == home / ".config" / "elisium-downloader"
+    assert paths.config_dir(env=env, home=home) == home / ".config" / "elisium"
 
 
 def test_real_home_is_not_touched_when_overrides_are_given(

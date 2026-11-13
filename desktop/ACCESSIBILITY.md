@@ -1,4 +1,4 @@
-# Accessibility - Elisium Downloader (desktop)
+# Accessibility - Elisium (desktop)
 
 ## What is covered
 - Every control has an accessible name (and a description where useful); status is always an icon plus a word.
@@ -20,7 +20,7 @@
 - Orca key echo and global keys are limited on Wayland compositors (Hyprland), so some Orca behaviour differs from X11.
 
 ## Manual Orca checklist (Hyprland / Wayland session)
-Start Orca (`orca &`, or Super+Alt+S if bound), then start `elisium-downloader`.
+Start Orca (`orca &`, or Super+Alt+S if bound), then start `elisium`.
 1. Focus lands in the link box; Orca says "Video link". Tab through Paste, Add, Options, Sections, Downloads: each is named.
 2. Press Ctrl+L from the table: back in the link box.
 3. Paste a link and press Enter: the row appears and the status bar says "Added 1 link".
