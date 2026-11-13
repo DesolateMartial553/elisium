@@ -8,12 +8,14 @@ Workflow: OpenCode implements one brief from `briefs/`; Claude audits the diff a
 - Phase 0 prep: done (folder, AGENTS.md, SPEC.md, briefs 1A-1C).
 - Phase 1A: DONE, audited (41 tests pass, re-run by Claude; urlnorm/errors/paths read and spot-checked). Note: xdg-user-dir returns $HOME when DOWNLOAD is unset, which would give ~/Elisium Downloader; handle in a later brief.
 - Phase 1B: DONE, audited (107 tests pass; archive/history read). Concern moved to 1C: archive lost-update race with yt-dlp appends.
-- Phase 1C: running.
+- Phase 1C: DONE, audited (161 pass; real-yt-dlp end-to-end run OK: 3 URL forms -> 1 item, 1 file, empty temp, archive written, restart makes no copy). Gaps -> brief 1D: same-session re-add after delete, file_path for non-YouTube, silent archive skip reported as done, "converting" shown for MoveFiles.
+- Phase 1D: running.
 
 ## Log
 | Brief | Implemented by | Audit | Notes |
 | 1A | OpenCode (owner-run) | Claude: pass | 41 tests, no forbidden imports |
 | 1B | OpenCode (Claude-launched, no --auto) | Claude: pass | 107 tests total |
+| 1C | OpenCode (Claude-launched) | Claude: pass + e2e | 161 tests; pyproject marker added (accepted) |
 |---|---|---|---|
 
 ## Owner actions pending
