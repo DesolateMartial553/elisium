@@ -14,7 +14,8 @@ Workflow: OpenCode implements one brief from `briefs/`; Claude audits the diff a
 - Phase 2B: DONE (sidebar, History page, Settings page, presets, queue setters; 252 tests). OpenCode hit its free limit again after presets.py; Sonnet subagent finished. Audited: real home untouched, screenshots reviewed.
 - Phase 2C: DONE (Options button, Choose-quality dialog with exact-format table, playlist picker with ranges; 321 tests). Sonnet subagent. Review notes: default probe uses queue._probe_url/_ytdlp via getattr (make public in 2D); unticked checkboxes faint on dark offscreen theme (check under Breeze).
 - Phase 2D: DONE (tray, notifications via freedesktop, a11y pass, public queue.probe; 391 tests). Sonnet subagent, corrected mid-task for Hyprland. NOT verified: Orca, real tray/dunst, owner theme contrast.
-- Next: real-session smoke test, Phase 3 integration (elisium:// handler, CLI add, browser ext), Phase 4 packaging, Phase 5 Android.
+- Real-session smoke test DONE 2026-11-13: app runs natively on Wayland (not XWayland), window opens, themed by HyDE, no errors. Found + fixed narrow-tile clipping (low-priority columns now hide). Not yet tried: a real download from the GUI, real tray in waybar, dunst notification.
+- Next: Phase 3 integration (elisium:// handler, CLI add, browser ext), Phase 4 packaging, Phase 5 Android.
 
 ## Log
 | Brief | Implemented by | Audit | Notes |

@@ -262,3 +262,21 @@ def test_default_probe_goes_through_the_queues_public_probe(window, ui_queue) ->
     assert window._default_probe("https://a.com/1") == {
         "id": "x", "title": "Fake title", "extractor_key": "Fake"}
     assert ui_queue.ytdlp == "yt-dlp"
+
+
+def test_narrow_window_hides_low_priority_columns_and_wide_shows_them(window) -> None:
+    from elisium_downloader.ui.model import COL_ETA, COL_SIZE, COL_SPEED, COL_STATUS
+
+    window.resize(1400, 500)
+    window.show()
+    window._update_columns()
+    assert not window.table.isColumnHidden(COL_SIZE)
+    assert not window.table.isColumnHidden(COL_ETA)
+    window.resize(window.minimumSizeHint().width() + 10, 500)
+    window._update_columns()
+    assert window.table.isColumnHidden(COL_SIZE)
+    assert not window.table.isColumnHidden(COL_STATUS)
+    window.resize(1400, 500)
+    window._update_columns()
+    assert not window.table.isColumnHidden(COL_SIZE)
+    assert not window.table.isColumnHidden(COL_SPEED)

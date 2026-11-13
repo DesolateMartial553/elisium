@@ -486,6 +486,8 @@ def test_main_history_settings_fit_at_200_percent(big_text, qapp, ui_queue, tmp_
                 assert not table.horizontalScrollBar().isVisible(), f"{name} scrolls sideways"
                 assert table.horizontalScrollBar().maximum() == 0
         window.show_section(0)
+        # Wide enough for every column: none may be hidden or clip its text.
+        window.resize(3000, window.height())
         pump()
         assert table_cells_fit(window.table, {
             1: STATUS_TEXT["downloading"], 3: "99.9 MB/s", 4: "99h 59m", 5: "999.9 MB",

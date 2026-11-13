@@ -558,16 +558,44 @@ class MainWindow(QMainWindow):
             COL_ETA: wide("99h 59m"),
             COL_SIZE: wide("999.9 MB"),
         }
-        total = 0
+        self._column_widths = {}
         for column, minimum in floor.items():
             width = max(minimum, content[column], wide(str(COLUMNS[column])))
             self.table.setColumnWidth(column, width)
-            total += width
-        title_min = fm.horizontalAdvance("M") * 8
-        self.table.setMinimumWidth(total + title_min + self.table.frameWidth() * 2)
+            self._column_widths[column] = width
+        self._title_min = fm.horizontalAdvance("M") * 8
+        # Only the essential columns set a hard minimum; the rest hide when
+        # the window is narrow (see _update_columns).
+        essential = sum(self._column_widths[c] for c in (COL_STATUS, COL_PROGRESS))
+        self.table.setMinimumWidth(essential + self._title_min + self.table.frameWidth() * 2)
         self.sidebar.setFixedWidth(
             max(150, max(fm.horizontalAdvance(name) for name in SECTIONS) + pad * 2)
         )
+        self._update_columns()
+
+    # Lowest priority first: these are hidden first when the window is narrow
+    # (a tiling compositor such as Hyprland often makes it narrow).
+    _DROP_ORDER = (COL_SIZE, COL_ETA, COL_SPEED)
+
+    def _update_columns(self) -> None:
+        """Hide the least important columns that do not fit, show the rest."""
+        widths = getattr(self, "_column_widths", None)
+        if not widths or not hasattr(self, "table"):
+            return
+        available = self.table.viewport().width()
+        hidden: set[int] = set()
+        needed = self._title_min + sum(widths.values())
+        for column in self._DROP_ORDER:
+            if needed <= available:
+                break
+            hidden.add(column)
+            needed -= widths[column]
+        for column in widths:
+            self.table.setColumnHidden(column, column in hidden)
+
+    def resizeEvent(self, event: Any) -> None:
+        super().resizeEvent(event)
+        self._update_columns()
 
     def changeEvent(self, event: QEvent) -> None:
         super().changeEvent(event)
