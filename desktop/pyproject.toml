@@ -20,4 +20,7 @@ include = ["elisium_downloader*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["live: real network (yt-dlp download); skipped unless ELISIUM_LIVE_TESTS=1"]
+markers = [
+    "live: real network (yt-dlp download); skipped unless ELISIUM_LIVE_TESTS=1",
+    "e2e: real yt-dlp + ffmpeg against a local 127.0.0.1 server; skipped if either is missing",
+]

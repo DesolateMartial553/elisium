@@ -10,6 +10,7 @@ Stages map onto the queue states from the spec::
 
     download progress        -> downloading
     postprocessor "Merger"   -> merging
+    MoveFiles/Metadata/...   -> downloading (no state change)
     any other postprocessor  -> converting
 
 Every yt-dlp flag that matters for queueing lives in :func:`build_command`, so
@@ -88,6 +89,7 @@ class DownloadOptions:
     retries: int = 3
     fragment_retries: int = 3
     extra_args: Sequence[str] = ()
+    path_file: str | Path | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.url, str) or not self.url.strip():
@@ -109,6 +111,12 @@ def build_command(opts: DownloadOptions) -> list[str]:
     archive (dedupe layer 1), ``--no-overwrites`` plus the fixed output
     template (layer 2), the home/temp split so the output folder never holds a
     ``.part`` file, and ``--continue`` so a paused item resumes.
+
+    When ``opts.path_file`` is set, yt-dlp writes the final moved file path
+    to that file via ``--print-to-file after_move:filepath <file>``. This is
+    the only reliable way to know the real output path for non-YouTube sites
+    (the ``[<id>]`` scan in :func:`DownloadQueue._find_output` only works for
+    YouTube ids). The flag does not imply ``--quiet`` or ``--simulate``.
     """
     argv = [
         str(opts.ytdlp),
@@ -134,6 +142,14 @@ def build_command(opts: DownloadOptions) -> list[str]:
         "-f",
         opts.format_selector,
     ]
+    if opts.path_file is not None:
+        argv.extend(
+            [
+                "--print-to-file",
+                "after_move:filepath",
+                _path(opts.path_file),
+            ]
+        )
     if opts.limit_rate:
         argv.extend(["--limit-rate", str(opts.limit_rate)])
     argv.extend(str(arg) for arg in opts.extra_args)
@@ -233,12 +249,32 @@ def _text(value: Any) -> str:
     return str(value)
 
 
+_HOUSEKEEPING_POSTPROCESSORS: frozenset[str] = frozenset(
+    {
+        "movefiles",
+        "metadata",
+        "ffmpegmetadata",
+        "sponsorblock",
+    }
+)
+
+
+
 def stage_for_postprocessor(name: str) -> str:
-    """Map a yt-dlp postprocessor name onto a queue stage."""
+    """Map a yt-dlp postprocessor name onto a queue stage.
+
+    Housekeeping postprocessors (MoveFiles, Metadata, FFmpegMetadata,
+    SponsorBlock) return ``"downloading"``; the queue treats a postprocessor
+    event with that stage as "no state change". Everything else (ExtractAudio,
+    VideoConvertor, VideoRemuxer, EmbedSubtitle, EmbedThumbnail,
+    ModifyChapters, Fixup*) is real work and maps to ``"converting"``;
+    mergers map to ``"merging"``.
+    """
     lowered = (name or "").lower()
     if "merg" in lowered:  # Merger, FFmpegMerger
         return "merging"
-    # ExtractAudio, VideoConvertor, VideoRemuxer, Fixup*, ...
+    if lowered in _HOUSEKEEPING_POSTPROCESSORS:
+        return "downloading"
     return "converting"
 
 

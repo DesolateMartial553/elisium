@@ -431,3 +431,38 @@ def test_live_short_video_download(tmp_path: Path) -> None:
     )
     assert handle.wait(600) == 0
     assert list(out.iterdir())
+
+
+# -- brief 1D ------------------------------------------------------------
+def test_path_file_adds_print_to_file_after_move(tmp_path: Path) -> None:
+    opts = make_options(tmp_path, tmp_path / "yt-dlp")
+    assert "--print-to-file" not in build_command(opts)
+    with_file = DownloadOptions(
+        url=opts.url,
+        output_dir=opts.output_dir,
+        temp_dir=opts.temp_dir,
+        archive_path=opts.archive_path,
+        path_file=tmp_path / "x.path",
+    )
+    argv = build_command(with_file)
+    at = argv.index("--print-to-file")
+    assert argv[at + 1 : at + 3] == ["after_move:filepath", str(tmp_path / "x.path")]
+    assert argv[-1] == opts.url
+
+
+def test_housekeeping_postprocessors_are_not_converting() -> None:
+    for name in ("MoveFiles", "Metadata", "FFmpegMetadata", "SponsorBlock"):
+        assert stage_for_postprocessor(name) == "downloading"
+
+
+def test_real_conversion_postprocessors_stay_converting() -> None:
+    for name in (
+        "ExtractAudio",
+        "VideoConvertor",
+        "VideoRemuxer",
+        "EmbedSubtitle",
+        "EmbedThumbnail",
+        "ModifyChapters",
+        "FixupM4a",
+    ):
+        assert stage_for_postprocessor(name) == "converting"

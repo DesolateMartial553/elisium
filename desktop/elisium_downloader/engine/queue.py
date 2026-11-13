@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from . import runner
-from .archive import Archive, reconcile
+from .archive import Archive, _file_exists, reconcile
 from .errors import ErrorInfo, explain
 from .history import History, TERMINAL_STATES
 from .urlnorm import normalize_url, video_key
@@ -62,6 +62,8 @@ ALREADY_DOWNLOADED = ErrorInfo(
     "Already downloaded.", "It is in the download folder", "already_downloaded"
 )
 _UNKNOWN = ErrorInfo("Download failed.", "See Details", "unknown")
+# yt-dlp prints this and exits 0 when the archive already holds the video.
+_ARCHIVE_SKIP_TEXT = "has already been recorded in the archive"
 
 
 def _check_concurrency(value: int) -> int:
@@ -128,6 +130,9 @@ class QueueItem:
     percent: float | None = None
     handle: Any = None
     owned: bool = False
+    # ``<extractor>:<id>`` as yt-dlp archives it, learned from the probe for
+    # sites where ``video_key`` is None (not part of the snapshot).
+    archive_key: str | None = None
 
     def snapshot(self) -> dict[str, Any]:
         """A plain-dict view for the UI and for events."""
@@ -278,7 +283,12 @@ class DownloadQueue:
         with self._cond:
             existing = self._by_identity.get(identity)
             if existing is not None:
-                return self._items[existing].snapshot()
+                found = self._items[existing]
+                if found.state in ("done", "skipped") and not self._file_present(
+                    found
+                ):
+                    self._requeue_missing(found)
+                return found.snapshot()
             record_id = self.history.add(clean, video_key=identity, state="queued")
             item = QueueItem(
                 id=self._next_id,
@@ -295,6 +305,52 @@ class DownloadQueue:
             self._cond.notify_all()
             self._emit({"type": "added", "item": snapshot})
         return snapshot
+
+    def _file_present(self, item: QueueItem) -> bool:
+        """False only when we can tell the finished file is gone.
+
+        If the item has neither a known path nor an id to scan for, there is
+        nothing to check and the existing item is kept.
+        """
+        key = item.video_key or item.archive_key
+        if item.file_path is None and key is None:
+            return True
+        if item.file_path is not None and os.path.isfile(item.file_path):
+            return True
+        if key is not None:
+            _, _, video_id = key.partition(":")
+            if video_id and _file_exists(self.output_dir, video_id):
+                return True
+        return False
+
+    def _requeue_missing(self, item: QueueItem) -> None:
+        """Put a done/skipped item whose file was deleted back to ``queued``.
+
+        Caller holds the state lock. The stale archive entry is dropped under
+        the archive lock, and only while no download is active (yt-dlp appends
+        to the archive and :meth:`Archive.remove` rewrites it). If a download
+        is active the entry stays; ``_attempt`` reconciles again later.
+        """
+        key = item.video_key or item.archive_key
+        if key is not None and not self._downloading():
+            extractor, _, video_id = key.partition(":")
+            if extractor and video_id:
+                with self._archive_lock:
+                    try:
+                        self.archive.remove(extractor, video_id)
+                    except (OSError, ValueError):
+                        pass
+        item.error = None
+        item.attempts = 0
+        item.file_path = None
+        item.percent = None
+        item.stage = None
+        item.downloaded_bytes = None
+        item.total_bytes = None
+        item.speed = None
+        item.eta = None
+        self._set_state(item, "queued", clear_error=True)
+        self._cond.notify_all()
 
     # -- user actions ----------------------------------------------------
     def pause(self, item_id: int) -> bool:
@@ -551,6 +607,7 @@ class DownloadQueue:
         except OSError:  # pragma: no cover - defensive
             error = _UNKNOWN
         else:
+            self._learn_archive_key(item, info)
             title = _title_from(info)
             if title is not None:
                 with self._cond:
@@ -577,6 +634,21 @@ class DownloadQueue:
         if error is None:
             return None
         return self._after_failure(item, error)
+    @staticmethod
+    def _learn_archive_key(item: QueueItem, info: Any) -> None:
+        if item.video_key is not None or not isinstance(info, Mapping):
+            return
+        extractor = info.get("extractor_key") or info.get("extractor")
+        video_id = info.get("id")
+        if (
+            isinstance(extractor, str)
+            and isinstance(video_id, str)
+            and extractor.strip()
+            and video_id.strip()
+            and not any(ch.isspace() for ch in extractor + video_id)
+        ):
+            item.archive_key = f"{extractor.lower()}:{video_id}"
+
     def _after_failure(
         self, item: QueueItem, error: ErrorInfo
     ) -> float | None:
@@ -604,6 +676,12 @@ class DownloadQueue:
         Returns ``(None, raw)`` on success and on a user pause/cancel, and
         ``(ErrorInfo, raw)`` for a real failure.
         """
+        path_file = self.temp_dir / f"item-{item.id}.path"
+        try:
+            self.temp_dir.mkdir(parents=True, exist_ok=True)
+            path_file.unlink(missing_ok=True)
+        except OSError:
+            pass
         opts = runner.DownloadOptions(
             url=item.url,
             output_dir=self.output_dir,
@@ -612,6 +690,7 @@ class DownloadQueue:
             format_selector=self._format_selector,
             limit_rate=self._limit_rate,
             ytdlp=self._ytdlp,
+            path_file=path_file,
         )
         handle = self._run_download(
             opts, lambda event: self._on_progress(item, event)
@@ -629,16 +708,44 @@ class DownloadQueue:
         with self._cond:
             item.handle = None
             if item.state in ("paused", "cancelled"):
+                self._discard(path_file)
                 return None, raw
 
         if returncode == 0 and not terminated:
-            path = self._find_output(item)
+            reported = self._read_path_file(path_file)
+            self._discard(path_file)
+            if reported is None and _ARCHIVE_SKIP_TEXT in raw:
+                # yt-dlp exited 0 but downloaded nothing: the archive had it.
+                with self._cond:
+                    if item.state in DOWNLOADING_STATES:
+                        item.error = ALREADY_DOWNLOADED
+                        self._set_state(item, "skipped", error=ALREADY_DOWNLOADED)
+                return None, raw
+            path = reported or self._find_output(item)
             with self._cond:
                 item.file_path = path
                 item.percent = 100.0
                 self._set_state(item, "done", file_path=path)
             return None, raw
+        self._discard(path_file)
         return explain(raw), raw
+
+    @staticmethod
+    def _read_path_file(path_file: Path) -> str | None:
+        """Last non-empty line of yt-dlp's ``--print-to-file`` output."""
+        try:
+            text = path_file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        return lines[-1] if lines else None
+
+    @staticmethod
+    def _discard(path_file: Path) -> None:
+        try:
+            path_file.unlink(missing_ok=True)
+        except OSError:
+            pass
 
     def _on_progress(self, item: QueueItem, event: Any) -> None:
         if not isinstance(event, Mapping) or event.get("type") != "progress":
@@ -647,7 +754,8 @@ class DownloadQueue:
         with self._cond:
             if item.state in TERMINAL_STATES or item.state == "paused":
                 return
-            if stage in runner.STAGES and item.state != stage:
+            housekeeping = bool(event.get("postprocessor")) and stage == "downloading"
+            if stage in runner.STAGES and item.state != stage and not housekeeping:
                 self._set_state(item, str(stage))
             item.stage = stage if isinstance(stage, str) else None
             for field in ("downloaded_bytes", "total_bytes", "speed", "eta", "percent"):
@@ -666,7 +774,8 @@ class DownloadQueue:
         download in the middle of an archive rewrite, and the archive lock
         serialises every archive read and write in this process.
         """
-        if item.video_key is None:
+        key = item.video_key or item.archive_key
+        if key is None:
             return False
         with self._lock:
             with self._archive_lock:
@@ -675,7 +784,7 @@ class DownloadQueue:
                     if self._downloading()
                     else self.archive
                 )
-                return reconcile(archive, item.video_key, self.output_dir)
+                return reconcile(archive, key, self.output_dir)
 
     def _find_output(self, item: QueueItem) -> str | None:
         """Newest finished file in the output folder carrying ``[<id>]``."""

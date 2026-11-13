@@ -650,3 +650,142 @@ def test_stop_pauses_running_items(harness) -> None:
 
     h.queue.stop(2.0)
     assert h.queue.item(item["id"])["state"] == "paused"
+
+
+# -- brief 1D ------------------------------------------------------------
+PATH_BODY = "\n".join(
+    [
+        "pathlib.Path(HOME).joinpath('Weird name.mp4').write_text('x')",
+        "pf = argv[argv.index('--print-to-file') + 2]",
+        "pathlib.Path(pf).write_text(str(pathlib.Path(HOME) / 'Weird name.mp4') + '\\n')",
+    ]
+)
+SKIP_BODY = (
+    "print('[generic] clip: has already been recorded in the archive', flush=True)"
+)
+
+
+def test_reported_path_file_becomes_the_item_file_path(harness) -> None:
+    h = harness(body=PATH_BODY)
+    item = h.queue.add("https://example.com/clip.mp4")
+    h.queue.start()
+    assert h.queue.wait_until_idle(15)
+    done = h.queue.item(item["id"])
+    assert done["state"] == "done"
+    assert done["file_path"] == str(h.out / "Weird name.mp4")
+    assert h.row(item)["file_path"] == done["file_path"]
+    assert list(h.tmp.glob("*.path")) == []
+    assert "--print-to-file" in h.downloads()[0]
+
+
+def test_silent_archive_skip_is_reported_as_skipped(harness) -> None:
+    h = harness(body=SKIP_BODY)
+    item = h.queue.add("https://example.com/clip.mp4")
+    h.queue.start()
+    assert h.queue.wait_until_idle(15)
+    got = h.queue.item(item["id"])
+    assert got["state"] == "skipped"
+    assert got["error"]["code"] == "already_downloaded"
+    assert h.row(item)["state"] == "skipped"
+
+
+def test_archive_skip_text_with_a_new_file_is_still_done(harness) -> None:
+    h = harness(body=SKIP_BODY + "\n" + PATH_BODY)
+    item = h.queue.add("https://example.com/clip.mp4")
+    h.queue.start()
+    assert h.queue.wait_until_idle(15)
+    assert h.queue.item(item["id"])["state"] == "done"
+
+
+def test_plain_download_never_shows_converting(harness) -> None:
+    body = "\n".join(
+        [
+            progress({"status": "downloading", "downloaded_bytes": 1, "total_bytes": 2}),
+            progress({"status": "started", "postprocessor": "MoveFiles"}),
+            progress({"status": "started", "postprocessor": "Metadata"}),
+            SUCCESS_BODY,
+        ]
+    )
+    h = harness(body=body)
+    h.queue.add(URL)
+    seen: list[str] = []
+    h.queue.add_listener(
+        lambda event: seen.append(event["state"])
+        if event["type"] == "state"
+        else None
+    )
+    h.queue.start()
+    assert h.queue.wait_until_idle(15)
+    assert "converting" not in seen
+    assert "merging" not in seen
+    assert seen[-1] == "done"
+
+
+def _finish(h: Harness, url: str) -> dict:
+    item = h.queue.add(url)
+    h.queue.start()
+    assert h.queue.wait_until_idle(15)
+    return h.queue.item(item["id"])
+
+
+def test_readding_a_done_item_with_its_file_changes_nothing(harness) -> None:
+    h = harness(body=SUCCESS_BODY)
+    first = _finish(h, URL)
+    assert first["state"] == "done"
+    again = h.queue.add(URL)
+    assert again["id"] == first["id"]
+    assert again["state"] == "done"
+    assert len(h.downloads()) == 1
+
+
+def test_readding_a_done_item_after_deleting_its_file_downloads_again(harness) -> None:
+    h = harness(body=SUCCESS_BODY)
+    first = _finish(h, URL)
+    h.archive.add("youtube", VIDEO_ID)
+    Path(first["file_path"]).unlink()
+
+    again = h.queue.add(URL)
+    assert again["id"] == first["id"]
+    assert again["state"] == "queued"
+    assert again["error"] is None
+    assert again["file_path"] is None
+    assert not h.archive.has("youtube", VIDEO_ID)
+    assert h.row(first)["state"] == "queued"
+
+    assert h.queue.wait_until_idle(15)
+    final = h.queue.item(first["id"])
+    assert final["state"] == "done"
+    assert len(h.downloads()) == 2
+
+
+def test_readding_a_skipped_item_with_a_missing_file_downloads_again(harness) -> None:
+    h = harness(body=SUCCESS_BODY)
+    h.archive.add("youtube", VIDEO_ID)
+    kept = h.out / f"Old [{VIDEO_ID}].mp4"
+    kept.write_text("old")
+    first = _finish(h, URL)
+    assert first["state"] == "skipped"
+    assert h.queue.add(URL)["state"] == "skipped"  # file still there
+
+    kept.unlink()
+    assert h.queue.add(URL)["state"] == "queued"
+    assert h.queue.wait_until_idle(15)
+    assert h.queue.item(first["id"])["state"] == "done"
+
+
+def test_readding_a_failed_item_leaves_it_alone(harness) -> None:
+    h = harness(body="print('ERROR: HTTP Error 403: Forbidden')", code=1)
+    first = _finish(h, URL)
+    assert first["state"] == "failed"
+    assert h.queue.add(URL)["state"] == "failed"
+
+
+def test_non_youtube_archive_key_comes_from_the_probe(harness) -> None:
+    info = {"id": "clip", "title": "t", "extractor_key": "Generic"}
+    h = harness(body=SUCCESS_BODY, probe_info=info)
+    h.archive.add("generic", "clip")  # stale: no file in the output folder
+    item = h.queue.add("https://example.com/clip.mp4")
+    h.queue.start()
+    assert h.queue.wait_until_idle(15)
+    assert h.queue.item(item["id"])["state"] == "done"
+    assert not h.archive.has("generic", "clip")
