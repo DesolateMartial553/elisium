@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 from PySide6.QtCore import (
     QAbstractTableModel,
+    QEvent,
     QModelIndex,
     QObject,
     QPoint,
@@ -17,7 +18,7 @@ from PySide6.QtCore import (
     QTimer,
     QUrl,
 )
-from PySide6.QtGui import QDesktopServices, QGuiApplication
+from PySide6.QtGui import QDesktopServices, QFontMetrics, QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -183,13 +184,16 @@ class HistoryPage(QWidget):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
+        self.table.setTabKeyNavigation(False)
         self.table.setAlternatingRowColors(True)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for column, width in ((1, 140), (2, 130), (3, 130), (4, 180)):
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        for column in (1, 2, 3):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
-            self.table.setColumnWidth(column, width)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._fit_to_font()
         layout.addWidget(self.table, 1)
 
         buttons = QHBoxLayout()
@@ -233,6 +237,34 @@ class HistoryPage(QWidget):
         self.setTabOrder(self.again_button, self.copy_button)
         self.setTabOrder(self.copy_button, self.delete_button)
         self._update_buttons()
+
+    def _fit_to_font(self) -> None:
+        """Give Site, State and Date room for their text at any text size."""
+        fm = QFontMetrics(self.font())
+        pad = fm.height() // 2 + 8
+        sample = {
+            1: "www.youtube.com",
+            2: max(
+                [FILE_MISSING_TEXT, *STATUS_TEXT.values()], key=fm.horizontalAdvance
+            ),
+            3: "2000-12-31 23:59",
+        }
+        floor = {1: 140, 2: 130, 3: 130}
+        total = 0
+        for column, text in sample.items():
+            width = max(floor[column], fm.horizontalAdvance(text) + pad,
+                        fm.horizontalAdvance(COLUMNS[column]) + pad)
+            self.table.setColumnWidth(column, width)
+            total += width
+        self.table.setMinimumWidth(total + fm.horizontalAdvance("M") * 8)
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if hasattr(self, "table") and event.type() in (
+            QEvent.Type.FontChange,
+            QEvent.Type.ApplicationFontChange,
+        ):
+            self._fit_to_font()
 
     @staticmethod
     def _button(text: str, description: str) -> QPushButton:

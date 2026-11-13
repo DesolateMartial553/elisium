@@ -256,3 +256,9 @@ def test_grab_screenshot(window, tmp_path) -> None:
     out = tmp_path / "window.png"
     assert pixmap.save(str(out))
     assert out.stat().st_size > 1000
+
+
+def test_default_probe_goes_through_the_queues_public_probe(window, ui_queue) -> None:
+    assert window._default_probe("https://a.com/1") == {
+        "id": "x", "title": "Fake title", "extractor_key": "Fake"}
+    assert ui_queue.ytdlp == "yt-dlp"

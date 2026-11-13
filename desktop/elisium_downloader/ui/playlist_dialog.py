@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -30,6 +31,7 @@ from elisium_downloader.engine.presets import PRESETS, Preset, get
 from elisium_downloader.engine.queue import DownloadQueue
 
 from .probe_worker import ProbeWorker
+from .quality_dialog import dialog_scale, reduce_motion
 
 __all__ = ["PlaylistDialog"]
 
@@ -65,7 +67,7 @@ class PlaylistDialog(QDialog):
         self.known_count = 0
         self.setWindowTitle("Choose videos from a playlist")
         self.setAccessibleName("Playlist")
-        self.setMinimumSize(560, 460)
+        self._fit_to_font()
 
         self.worker = ProbeWorker(probe, self)
         self.worker.finished.connect(self._on_probed)
@@ -182,6 +184,7 @@ class PlaylistDialog(QDialog):
         self.select_all_button.clicked.connect(self.select_all)
         self.select_none_button.clicked.connect(self.select_none)
         self.range_edit.textChanged.connect(self._range_changed)
+        self.range_edit.installEventFilter(self)
         self.list.itemChanged.connect(lambda *_: self._update_count())
         self.retry_button.clicked.connect(self.start_probe)
         self.add_button.clicked.connect(self._add_selected)
@@ -192,6 +195,29 @@ class PlaylistDialog(QDialog):
                  self.add_button, self.cancel_button)
         for first, second in zip(chain, chain[1:]):
             QWidget.setTabOrder(first, second)
+
+    # -- text size and keys ----------------------------------------------
+    def _fit_to_font(self) -> None:
+        scale = dialog_scale(self)
+        self.setMinimumSize(round(560 * scale), round(460 * scale))
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.FontChange:
+            self._fit_to_font()
+
+    def eventFilter(self, watched: object, event: QEvent) -> bool:
+        """Enter in the range box applies the range; it must not press Add selected."""
+        if (
+            watched is self.range_edit
+            and event.type() == QEvent.Type.KeyPress
+            and isinstance(event, QKeyEvent)
+            and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+            and not event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+        ):
+            self._range_changed(self.range_edit.text())
+            return True
+        return super().eventFilter(watched, event)
 
     # -- state -----------------------------------------------------------
     @property
@@ -205,7 +231,8 @@ class PlaylistDialog(QDialog):
         self.status_label.setAccessibleDescription(description or text)
         failed = state == "failed"
         ready = state == "ready"
-        self.progress.setVisible(state == "probing")
+        # Reduced motion: no busy bar, the status text alone says "Checking...".
+        self.progress.setVisible(state == "probing" and not reduce_motion())
         self.retry_button.setVisible(failed)
         self.fix_label.setVisible(failed)
         self.details_button.setVisible(failed)

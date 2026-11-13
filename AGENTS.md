@@ -14,3 +14,6 @@ A yt-dlp front end for Arch Linux (PySide6/Qt6) and Android (Kotlin/Compose). Yo
 
 ## Output contract
 When finished, write a short `briefs/<brief>.result.md`: files changed, commands run with pass/fail, anything unfinished. Do not claim a check passed unless you ran it.
+
+## Target desktop (corrected 2026-11-13)
+The owner runs **Hyprland on Wayland** (HyDE dotfiles, waybar with a tray module, dunst for notifications, `qt6-wayland`, `qt6ct` + Kvantum for Qt theming). It is NOT KDE. Use freedesktop/XDG standards only: `org.freedesktop.Notifications`, StatusNotifierItem tray, `xdg-open`, `xdg-user-dir`. No KDE-only APIs (KNotification, KDE Wallet as a hard dependency). On Wayland an app cannot reliably raise, focus or position its own window. Do not hard-code colours; follow the Qt platform theme.

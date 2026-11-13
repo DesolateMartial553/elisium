@@ -13,7 +13,8 @@ Workflow: OpenCode implements one brief from `briefs/`; Claude audits the diff a
 - Phase 2A: DONE (main window, queue table, toolbar, shortcuts, a11y names; 223 tests). Built by a Sonnet subagent (OpenCode out of free usage); Claude fixed the progress delegate (selection gap, invisible percent). Not yet covered: real key-press tests, 25%-step screen-reader announcements.
 - Phase 2B: DONE (sidebar, History page, Settings page, presets, queue setters; 252 tests). OpenCode hit its free limit again after presets.py; Sonnet subagent finished. Audited: real home untouched, screenshots reviewed.
 - Phase 2C: DONE (Options button, Choose-quality dialog with exact-format table, playlist picker with ranges; 321 tests). Sonnet subagent. Review notes: default probe uses queue._probe_url/_ytdlp via getattr (make public in 2D); unticked checkboxes faint on dark offscreen theme (check under Breeze).
-- Next: 2D tray/notifications + accessibility pass, then Phase 3 integration, Phase 4 packaging, Phase 5 Android.
+- Phase 2D: DONE (tray, notifications via freedesktop, a11y pass, public queue.probe; 391 tests). Sonnet subagent, corrected mid-task for Hyprland. NOT verified: Orca, real tray/dunst, owner theme contrast.
+- Next: real-session smoke test, Phase 3 integration (elisium:// handler, CLI add, browser ext), Phase 4 packaging, Phase 5 Android.
 
 ## Log
 | Brief | Implemented by | Audit | Notes |
@@ -24,6 +25,7 @@ Workflow: OpenCode implements one brief from `briefs/`; Claude audits the diff a
 | 2A | Sonnet subagent | Claude: pass + fix | 223 tests; screenshot reviewed |
 | 2B | OpenCode (presets.py only, then limit) + Sonnet subagent | Claude: pass | 252 tests; screenshots reviewed |
 | 2C | Sonnet subagent | Claude: pass | 321 tests; screenshots reviewed |
+| 2D | Sonnet subagent | Claude: pass | 391 tests; Orca/tray/dunst untested |
 |---|---|---|---|
 
 ## Owner actions pending

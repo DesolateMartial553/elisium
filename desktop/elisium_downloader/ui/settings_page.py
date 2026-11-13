@@ -116,7 +116,7 @@ class SettingsPage(QWidget):
         form.addRow("", self.notify_check)
         self.tray_check = QCheckBox("Keep running in the tray when closed")
         self._describe(self.tray_check, "Keep running in the tray when closed",
-                       "Saved for a later version; it has no effect yet.")
+                       "When on, closing the window hides it to the tray and downloads carry on.")
         form.addRow("", self.tray_check)
 
         self.folder_label = QLabel(str(self.queue.output_dir))
@@ -127,10 +127,10 @@ class SettingsPage(QWidget):
         self.open_folder_button = QPushButton("Open")
         self._describe(self.open_folder_button, "Open download folder",
                        "Open the download folder in your file manager.")
-        folder_row = QHBoxLayout()
-        folder_row.addWidget(self.folder_label, 1)
-        folder_row.addWidget(self.open_folder_button)
-        form.addRow(self._label("Download folder", self.open_folder_button), folder_row)
+        # The path label sits directly in the form (a wrapped label nested in a
+        # box layout gets too little height at large text sizes).
+        form.addRow(self._label("Download folder", self.open_folder_button), self.folder_label)
+        form.addRow("", self.open_folder_button)
 
         self.version_label = QLabel("checking...")
         self._describe(self.version_label, "yt-dlp version",

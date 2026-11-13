@@ -270,6 +270,18 @@ class DownloadQueue:
                 pass
 
     # -- reading ---------------------------------------------------------
+    @property
+    def ytdlp(self) -> str:
+        """The yt-dlp executable this queue runs."""
+        return self._ytdlp
+
+    def probe(self, url: str) -> dict[str, Any]:
+        """Probe *url* with the queue's own probe function and yt-dlp path.
+
+        Blocks while yt-dlp runs, so call it from a worker thread.
+        """
+        return self._probe_url(url, self._ytdlp)
+
     def items(self) -> list[dict[str, Any]]:
         """Every item, oldest first, as snapshots."""
         with self._cond:

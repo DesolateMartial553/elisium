@@ -7,14 +7,19 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from PySide6.QtCore import QModelIndex, QPoint, QUrl, Qt
+from PySide6.QtCore import QEvent, QModelIndex, QPoint, QUrl, Qt
 from PySide6.QtGui import (
+    QAccessible,
+    QAccessibleAnnouncementEvent,
     QAction,
     QCloseEvent,
     QDesktopServices,
+    QFontMetrics,
     QGuiApplication,
     QIcon,
     QKeySequence,
+    QPalette,
+    QPen,
     QShortcut,
 )
 from PySide6.QtWidgets import (
@@ -30,9 +35,11 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QProxyStyle,
     QPushButton,
     QStyle,
     QStyledItemDelegate,
+    QStyleOption,
     QStyleOptionProgressBar,
     QStackedWidget,
     QStyleOptionViewItem,
@@ -51,9 +58,22 @@ from .playlist_dialog import PlaylistDialog
 from .quality_dialog import QualityDialog
 from .settings import Settings
 from .settings_page import SettingsPage
-from .model import COL_PROGRESS, COL_TITLE, COLUMNS, PERCENT_ROLE, DownloadModel
+from .tray import TrayController, tray_wanted
+from .model import (
+    COL_ETA,
+    COL_PROGRESS,
+    COL_SIZE,
+    COL_SPEED,
+    COL_STATUS,
+    COL_TITLE,
+    COLUMNS,
+    PERCENT_ROLE,
+    STATUS_TEXT,
+    DownloadModel,
+)
+from .quality_dialog import dialog_scale, font_scale
 
-__all__ = ["MainWindow", "ProgressDelegate", "extract_urls"]
+__all__ = ["MainWindow", "ProgressAnnouncer", "ProgressDelegate", "SHORTCUTS", "extract_urls"]
 
 PAUSABLE = frozenset({"queued", "probing", "downloading", "merging", "converting"})
 CANCELLABLE = frozenset(
@@ -63,16 +83,26 @@ RETRYABLE = frozenset({"failed", "cancelled"})
 SECTIONS = ("Downloads", "History", "Settings")
 ACTIVE = frozenset({"probing", "downloading", "merging", "converting"})
 
+# (text shown in the F1 cheat sheet, what it does, the key sequences registered
+# for it). The cheat sheet and the registered QShortcuts both come from this one
+# table, so they cannot drift apart; an empty tuple means "not a QShortcut"
+# (Enter in the link box is the line edit's own returnPressed).
 SHORTCUTS = (
-    ("Ctrl+L", "Go to the link box"),
-    ("Ctrl+V", "Paste and add links (when the list is focused)"),
-    ("Enter / Ctrl+Return", "Add the link in the box (playlists ask which videos)"),
-    ("Ctrl+Shift+Return", "Choose the quality for the link in the box"),
-    ("Space", "Pause or resume the selected download"),
-    ("Ctrl+1 / Ctrl+2 / Ctrl+3", "Go to Downloads, History or Settings"),
-    ("Ctrl+Q", "Quit"),
-    ("F1", "Show this list"),
+    ("Ctrl+L", "Go to the link box", ("Ctrl+L",)),
+    ("Ctrl+V", "Paste and add links (when the list is focused)", ("Ctrl+V",)),
+    ("Enter", "Add the link in the box (playlists ask which videos)", ()),
+    ("Ctrl+Return", "Add the link in the box from anywhere in the window",
+     ("Ctrl+Return", "Ctrl+Enter")),
+    ("Ctrl+Shift+Return", "Choose the quality for the link in the box",
+     ("Ctrl+Shift+Return", "Ctrl+Shift+Enter")),
+    ("Space", "Pause or resume the selected download", ("Space",)),
+    ("Ctrl+1 / Ctrl+2 / Ctrl+3", "Go to Downloads, History or Settings",
+     ("Ctrl+1", "Ctrl+2", "Ctrl+3")),
+    ("Ctrl+Q", "Quit", ("Ctrl+Q",)),
+    ("F1", "Show this list", ("F1",)),
 )
+PROGRESS_STEPS = (25, 50, 75)
+_TERMINAL = frozenset({"done", "failed", "skipped", "cancelled"})
 
 
 def extract_urls(text: str) -> tuple[list[str], int]:
@@ -92,6 +122,129 @@ def _links(count: int) -> str:
     return f"{count} link" if count == 1 else f"{count} links"
 
 
+_FOCUS_PRIMITIVES = frozenset({
+    QStyle.PrimitiveElement.PE_PanelButtonCommand,
+    QStyle.PrimitiveElement.PE_FrameLineEdit,
+    QStyle.PrimitiveElement.PE_PanelLineEdit,
+    QStyle.PrimitiveElement.PE_Frame,
+})
+_CHECK_PRIMITIVES = frozenset({
+    QStyle.PrimitiveElement.PE_IndicatorCheckBox,
+    QStyle.PrimitiveElement.PE_IndicatorRadioButton,
+    QStyle.PrimitiveElement.PE_IndicatorItemViewItemCheck,
+})
+
+
+class AccessibleStyle(QProxyStyle):
+    """Wraps the user's own Qt style and adds what some styles leave faint.
+
+    It outlines check boxes and radio buttons, and draws a clear focus ring, in
+    the palette's own text colour (so it follows qt6ct/Kvantum, dark or light,
+    and has at least 3:1 contrast against the background). Nothing else changes.
+    """
+
+    def _outline(self, painter: Any, rect: Any, option: QStyleOption, width: float) -> None:
+        group = (
+            QPalette.ColorGroup.Normal
+            if option.state & QStyle.StateFlag.State_Enabled
+            else QPalette.ColorGroup.Disabled
+        )
+        painter.save()
+        painter.setRenderHint(painter.RenderHint.Antialiasing, False)
+        painter.setPen(QPen(option.palette.color(group, QPalette.ColorRole.WindowText), width))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        half = width / 2
+        painter.drawRect(rect.adjusted(int(half), int(half), -int(half) - 1, -int(half) - 1))
+        painter.restore()
+
+    def drawPrimitive(self, element, option, painter, widget=None) -> None:  # noqa: N802
+        super().drawPrimitive(element, option, painter, widget)
+        if element in _CHECK_PRIMITIVES:
+            self._outline(painter, option.rect, option, 1)
+        elif element in _FOCUS_PRIMITIVES and option.state & QStyle.StateFlag.State_HasFocus:
+            self._outline(painter, option.rect, option, 2)
+
+    def drawControl(self, element, option, painter, widget=None) -> None:  # noqa: N802
+        # The user's style may itself be a proxy (qt6ct), and nested proxies do
+        # not see each other's primitives, so the controls are handled here too.
+        super().drawControl(element, option, painter, widget)
+        ce = QStyle.ControlElement
+        focused = bool(option.state & QStyle.StateFlag.State_HasFocus)
+        if element in (ce.CE_CheckBox, ce.CE_RadioButton):
+            sub = (
+                QStyle.SubElement.SE_CheckBoxIndicator
+                if element == ce.CE_CheckBox
+                else QStyle.SubElement.SE_RadioButtonIndicator
+            )
+            self._outline(painter, self.subElementRect(sub, option, widget), option, 1)
+        elif element in (ce.CE_PushButton, ce.CE_ShapedFrame) and focused:
+            self._outline(painter, option.rect, option, 2)
+
+    def drawComplexControl(self, control, option, painter, widget=None) -> None:  # noqa: N802
+        super().drawComplexControl(control, option, painter, widget)
+        if (
+            control in (QStyle.ComplexControl.CC_ComboBox, QStyle.ComplexControl.CC_ToolButton,
+                        QStyle.ComplexControl.CC_SpinBox)
+            and option.state & QStyle.StateFlag.State_HasFocus
+        ):
+            self._outline(painter, option.rect, option, 2)
+
+
+def install_accessible_style() -> None:
+    """Wrap the application's style once (safe to call again)."""
+    app = QApplication.instance()
+    if app is None or isinstance(app.style(), AccessibleStyle):
+        return
+    app.setStyle(AccessibleStyle(app.style().name()))
+
+
+class ProgressAnnouncer:
+    """Decides what a screen reader hears about download progress.
+
+    Per item: one announcement at 25, 50 and 75 percent (a jump past several
+    steps announces only the highest), then one for "finished" or "failed".
+    Plain progress ticks never announce, so 100 ticks give at most 4 messages.
+    """
+
+    def __init__(self, say: Callable[[str], None]) -> None:
+        self._say = say
+        self._step: dict[int, int] = {}
+        self._ended: set[int] = set()
+
+    @staticmethod
+    def _name(item: dict[str, Any]) -> str:
+        return item.get("title") or item.get("url") or "Download"
+
+    def feed(self, event: dict[str, Any]) -> None:
+        item = event.get("item")
+        if not isinstance(item, dict) or "id" not in item:
+            return
+        item_id, state = item["id"], item.get("state")
+        if state not in _TERMINAL and item_id in self._ended:
+            # Retried or resumed after finishing: announce afresh.
+            self._ended.discard(item_id)
+            self._step.pop(item_id, None)
+        if state == "done" and item_id not in self._ended:
+            self._ended.add(item_id)
+            self._say(f"{self._name(item)} finished")
+            return
+        if state == "failed" and item_id not in self._ended:
+            self._ended.add(item_id)
+            error = item.get("error") or {}
+            detail = f": {error['message']}" if error.get("message") else ""
+            self._say(f"{self._name(item)} failed{detail}")
+            return
+        if state not in ("downloading", "merging", "converting"):
+            return
+        percent = (item.get("progress") or {}).get("percent")
+        if percent is None:
+            return
+        reached = sum(1 for step in PROGRESS_STEPS if percent >= step)
+        if reached > self._step.get(item_id, 0):
+            self._step[item_id] = reached
+            self._say(f"{self._name(item)}: {PROGRESS_STEPS[reached - 1]} percent")
+
+
 class ProgressDelegate(QStyledItemDelegate):
     """Draws a progress bar with the percent text on it."""
 
@@ -107,9 +260,10 @@ class ProgressDelegate(QStyledItemDelegate):
         style.drawPrimitive(
             QStyle.PrimitiveElement.PE_PanelItemViewItem, option, painter, option.widget
         )
-        text_width = 44
+        text_width = option.fontMetrics.horizontalAdvance("100%") + 12
         bar = QStyleOptionProgressBar()
-        bar.rect = option.rect.adjusted(6, 8, -(text_width + 8), -8)
+        margin = max(8, option.rect.height() // 4)
+        bar.rect = option.rect.adjusted(6, margin, -(text_width + 8), -margin)
         bar.state = option.state | QStyle.StateFlag.State_Horizontal
         bar.direction = option.direction
         bar.palette = option.palette
@@ -144,9 +298,19 @@ class MainWindow(QMainWindow):
         version_fn: Callable[[], str | None] | None = None,
         probe_fn: Callable[[str], dict[str, Any]] | None = None,
         thumbnail_fetcher: Callable[..., None] | None = None,
+        tray_factory: Callable[[MainWindow], TrayController | None] | None = None,
     ) -> None:
+        """``tray_factory(window)`` builds the tray controller (or returns ``None``).
+
+        Left out, the real tray is built on a desktop session that has one, and
+        never under the offscreen/minimal Qt platforms. Tests inject a factory
+        that uses a fake icon.
+        """
         super().__init__(parent)
+        install_accessible_style()
         self.queue = queue
+        self._quitting = False
+        self.tray: TrayController | None = None
         self._probe_fn = probe_fn or self._default_probe
         self._thumbnail_fetcher = thumbnail_fetcher
         self.settings = settings or Settings()
@@ -164,6 +328,13 @@ class MainWindow(QMainWindow):
         self._build_actions()
         self._build_shortcuts()
         self._wire_tab_order()
+        self._fit_to_font()
+        self.announcements: list[str] = []
+        self.announcer = ProgressAnnouncer(self._announce)
+        if tray_factory is not None:
+            self.tray = tray_factory(self)
+        elif tray_wanted():
+            self.tray = TrayController(self)
         self._refresh_ui()
 
     # -- construction ----------------------------------------------------
@@ -212,6 +383,8 @@ class MainWindow(QMainWindow):
         self.table.setItemDelegateForColumn(COL_PROGRESS, ProgressDelegate(self.table))
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
+        # Tab must leave the table, not walk its cells.
+        self.table.setTabKeyNavigation(False)
         self.table.setAlternatingRowColors(True)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         header = self.table.horizontalHeader()
@@ -219,8 +392,7 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(COL_TITLE, QHeaderView.ResizeMode.Stretch)
         for column in range(1, len(COLUMNS)):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
-        for column, width in zip(range(1, len(COLUMNS)), (130, 150, 90, 70, 90), strict=True):
-            self.table.setColumnWidth(column, width)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         layout.addWidget(self.table, 1)
 
         self.history_page = HistoryPage(self.queue, self.bridge)
@@ -237,7 +409,6 @@ class MainWindow(QMainWindow):
         self.sidebar.setAccessibleDescription(
             "Switch between Downloads, History and Settings with the arrow keys."
         )
-        self.sidebar.setFixedWidth(150)
         for name in SECTIONS:
             self.sidebar.addItem(name)
         self.sidebar.setCurrentRow(0)
@@ -252,6 +423,12 @@ class MainWindow(QMainWindow):
         self.summary_label = QLabel()
         self.summary_label.setAccessibleName("Download summary")
         self.statusBar().addPermanentWidget(self.summary_label)
+        # One zero-height live label: screen readers are told about progress
+        # here, at coarse steps only (see ProgressAnnouncer).
+        self.live_label = QLabel()
+        self.live_label.setAccessibleName("Progress announcements")
+        self.live_label.setFixedHeight(0)
+        self.statusBar().addWidget(self.live_label)
         self.statusBar().setAccessibleName("Status bar")
 
         self.add_button.clicked.connect(self._add_from_box)
@@ -323,28 +500,36 @@ class MainWindow(QMainWindow):
 
         window = Qt.ShortcutContext.WindowShortcut
         own = Qt.ShortcutContext.WidgetShortcut
-        self._section_shortcuts = [
-            shortcut(f"Ctrl+{n}", lambda n=n: self.show_section(n - 1), self, window)
-            for n in (1, 2, 3)
-        ]
+        # key sequence -> (slot, widget, context); the keys themselves are listed
+        # (once) in SHORTCUTS, which also feeds the F1 cheat sheet.
+        handlers: dict[str, tuple[Any, QWidget, Qt.ShortcutContext]] = {
+            "Ctrl+L": (self.focus_url_bar, self, window),
+            "Ctrl+V": (self.paste_from_clipboard, self.table, own),
+            "Ctrl+Return": (self._add_from_box, self, window),
+            "Ctrl+Enter": (self._add_from_box, self, window),
+            "Ctrl+Shift+Return": (self.open_options, self, window),
+            "Ctrl+Shift+Enter": (self.open_options, self, window),
+            "Space": (self.toggle_pause_resume, self.table, own),
+            "Ctrl+Q": (self.quit_app, self, window),
+            "F1": (self.show_shortcuts, self, window),
+        }
+        for n in (1, 2, 3):
+            handlers[f"Ctrl+{n}"] = (lambda n=n: self.show_section(n - 1), self, window)
+        built = {
+            keys: shortcut(keys, *handlers[keys])
+            for _text, _meaning, sequences in SHORTCUTS
+            for keys in sequences
+        }
+        self._section_shortcuts = [built[f"Ctrl+{n}"] for n in (1, 2, 3)]
         self._add_shortcuts = [
-            shortcut("Ctrl+Return", self._add_from_box, self, window),
-            shortcut("Ctrl+Enter", self._add_from_box, self, window),
-            shortcut("Ctrl+Shift+Return", self.open_options, self, window),
-            shortcut("Ctrl+Shift+Enter", self.open_options, self, window),
+            built[k] for k in ("Ctrl+Return", "Ctrl+Enter", "Ctrl+Shift+Return", "Ctrl+Shift+Enter")
         ]
-        self._shortcuts = [
-            shortcut("Ctrl+V", self.paste_from_clipboard, self.table, own),
-            shortcut("Space", self.toggle_pause_resume, self.table, own),
-            shortcut("Ctrl+L", self.focus_url_bar, self, window),
-            shortcut("Ctrl+Q", self.close, self, window),
-            shortcut("F1", self.show_shortcuts, self, window),
-        ]
+        self._shortcuts = [built[k] for k in ("Ctrl+V", "Space", "Ctrl+L", "Ctrl+Q", "F1")]
 
     def _wire_tab_order(self) -> None:
         widgets: list[QWidget] = [
             self.url_edit, self.paste_button, self.add_button, self.options_button,
-            self.table,
+            self.sidebar, self.table,
         ]
         for action in (
             self.pause_action, self.resume_action, self.retry_action,
@@ -353,6 +538,42 @@ class MainWindow(QMainWindow):
             widgets.append(self.toolbar.widgetForAction(action))
         for first, second in zip(widgets, widgets[1:]):
             QWidget.setTabOrder(first, second)
+
+    # -- text size -------------------------------------------------------
+    def _fit_to_font(self) -> None:
+        """Size the sidebar and table columns from the text size (so 200% fits)."""
+        fm = QFontMetrics(self.font())
+        pad = fm.height() // 2 + 8
+
+        def wide(text: str) -> int:
+            return fm.horizontalAdvance(text) + pad
+
+        floor = {COL_STATUS: 130, COL_PROGRESS: 150, COL_SPEED: 90, COL_ETA: 70, COL_SIZE: 90}
+        content = {
+            COL_STATUS: max(wide(text) for text in STATUS_TEXT.values()),
+            COL_PROGRESS: wide("100%") + round(40 * font_scale(self)),
+            COL_SPEED: wide("999.9 MB/s"),
+            COL_ETA: wide("99h 59m"),
+            COL_SIZE: wide("999.9 MB"),
+        }
+        total = 0
+        for column, minimum in floor.items():
+            width = max(minimum, content[column], wide(str(COLUMNS[column])))
+            self.table.setColumnWidth(column, width)
+            total += width
+        title_min = fm.horizontalAdvance("M") * 8
+        self.table.setMinimumWidth(total + title_min + self.table.frameWidth() * 2)
+        self.sidebar.setFixedWidth(
+            max(150, max(fm.horizontalAdvance(name) for name in SECTIONS) + pad * 2)
+        )
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if hasattr(self, "table") and event.type() in (
+            QEvent.Type.FontChange,
+            QEvent.Type.ApplicationFontChange,
+        ):
+            self._fit_to_font()
 
     # -- sections --------------------------------------------------------
     def show_section(self, index: int) -> None:
@@ -373,6 +594,9 @@ class MainWindow(QMainWindow):
     def _on_event(self, event: dict[str, Any]) -> None:
         self.model.handle_event(event)
         self._refresh_ui()
+        self.announcer.feed(event)
+        if self.tray is not None:
+            self.tray.on_event(event)
         item = event.get("item")
         if (
             self.settings.notify_on_done
@@ -399,6 +623,18 @@ class MainWindow(QMainWindow):
                 counts[key] += 1
         text = ", ".join(f"{n} {name}" for name, n in counts.items() if n)
         self.summary_label.setText(text or "No downloads")
+        if self.tray is not None:
+            self.tray.update_tooltip(self.summary_label.text())
+
+    def _announce(self, text: str) -> None:
+        """Tell assistive technology *text* (polite, never interrupts speech)."""
+        self.announcements.append(text)
+        del self.announcements[:-50]
+        self.live_label.setText(text)
+        self.live_label.setAccessibleDescription(text)
+        event = QAccessibleAnnouncementEvent(self.live_label, text)
+        event.setPoliteness(QAccessible.AnnouncementPoliteness.Polite)
+        QAccessible.updateAccessibility(event)
 
     # -- selection -------------------------------------------------------
     def selected_snapshot(self) -> dict[str, Any] | None:
@@ -439,8 +675,7 @@ class MainWindow(QMainWindow):
 
     def _default_probe(self, url: str) -> dict[str, Any]:
         """Probe with the queue's own probe function and yt-dlp path."""
-        probe = getattr(self.queue, "_probe_url", runner.probe)
-        return probe(url, getattr(self.queue, "_ytdlp", "yt-dlp"))
+        return self.queue.probe(url)
 
     def add_text(self, text: str) -> None:
         """Add every link in *text* and report what happened in the status bar.
@@ -594,6 +829,16 @@ class MainWindow(QMainWindow):
         elif snap["state"] in PAUSABLE:
             self.queue.pause(snap["id"])
 
+    def pause_all(self) -> None:
+        for snap in self.queue.items():
+            if snap["state"] in PAUSABLE:
+                self.queue.pause(snap["id"])
+
+    def resume_all(self) -> None:
+        for snap in self.queue.items():
+            if snap["state"] == "paused":
+                self.queue.resume(snap["id"])
+
     def open_folder(self) -> None:
         snap = self.selected_snapshot()
         if snap is None or snap["state"] != "done":
@@ -626,17 +871,24 @@ class MainWindow(QMainWindow):
         menu.addAction(self.copy_action)
         menu.exec(self.table.viewport().mapToGlobal(pos))
 
-    def show_shortcuts(self) -> None:
+    def build_shortcuts_dialog(self) -> QDialog:
         dialog = QDialog(self)
         dialog.setWindowTitle("Keyboard shortcuts")
         dialog.setAccessibleName("Keyboard shortcuts")
         layout = QVBoxLayout(dialog)
-        for keys, meaning in SHORTCUTS:
-            layout.addWidget(QLabel(f"<b>{keys}</b>  {meaning}"))
+        dialog.setMinimumWidth(round(480 * dialog_scale(dialog)))
+        for keys, meaning, _sequences in SHORTCUTS:
+            label = QLabel(f"<b>{keys}</b>  {meaning}")
+            label.setWordWrap(True)
+            layout.addWidget(label)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
-        dialog.exec()
+        dialog.adjustSize()  # honours wrapped labels' height-for-width
+        return dialog
+
+    def show_shortcuts(self) -> None:
+        self._run_dialog(self.build_shortcuts_dialog())
 
     # -- closing ---------------------------------------------------------
     def _confirm_close(self) -> str:
@@ -658,15 +910,37 @@ class MainWindow(QMainWindow):
             return "keep"
         return "cancel"
 
+    def quit_app(self) -> None:
+        """Really quit (tray menu, Ctrl+Q): never just hide to the tray."""
+        self._quitting = True
+        try:
+            self.close()
+        finally:
+            self._quitting = False
+
+    def _hides_to_tray(self) -> bool:
+        return (
+            not self._quitting
+            and self.tray is not None
+            and self.settings.close_to_tray
+        )
+
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self._hides_to_tray():
+            # Keep running: downloads carry on while the window is hidden.
+            event.ignore()
+            self.hide()
+            self.tray.announce_hidden()
+            return
         active = self.queue.active_ids()
         if active:
             choice = self._confirm_close()
             if choice != "pause":
-                # "Keep downloading" just cancels the close until a tray exists.
                 event.ignore()
                 return
             for item_id in active:
                 self.queue.pause(item_id)
         self.bridge.close()
         event.accept()
+        if self.tray is not None:
+            self.tray.shutdown()

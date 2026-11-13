@@ -879,3 +879,21 @@ def test_duplicate_add_keeps_original_overrides(harness) -> None:
     assert h.queue.wait_until_idle(15)
     assert len(seen) == 1 and seen[0].format_selector == "137+140"
     assert tuple(seen[0].extra_args) == ()
+
+
+# -- public probe / ytdlp --------------------------------------------------
+def test_public_probe_uses_injected_probe_and_ytdlp(harness) -> None:
+    calls: list[tuple[str, str]] = []
+
+    def fake_probe(url, ytdlp="yt-dlp"):
+        calls.append((url, ytdlp))
+        return {"title": "Probed"}
+
+    h = harness(probe_url=fake_probe)
+    assert h.queue.probe("https://vimeo.com/1") == {"title": "Probed"}
+    assert calls == [("https://vimeo.com/1", h.queue.ytdlp)]
+
+
+def test_ytdlp_property_is_the_configured_path(harness) -> None:
+    h = harness()
+    assert isinstance(h.queue.ytdlp, str) and h.queue.ytdlp

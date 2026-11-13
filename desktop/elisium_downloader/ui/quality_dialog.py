@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from PySide6.QtCore import QModelIndex, Qt, Signal
-from PySide6.QtGui import QStandardItem, QStandardItemModel
+from PySide6.QtCore import QEvent, QModelIndex, Qt, Signal
+from PySide6.QtGui import QGuiApplication, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -32,12 +33,36 @@ from elisium_downloader.engine.queue import DownloadQueue
 from .probe_worker import ProbeWorker
 from .thumbnail import ThumbnailLoader, placeholder_pixmap
 
-__all__ = ["QualityDialog", "describe_selection"]
+__all__ = ["QualityDialog", "describe_selection", "dialog_scale", "font_scale", "reduce_motion"]
 
 _COLUMNS = ("Resolution", "FPS", "Type", "Codec", "Bitrate", "Size", "Note")
 _NONE_VIDEO = "No video (audio only)"
 _NONE_AUDIO = "No separate audio"
 ROW_ROLE = Qt.ItemDataRole.UserRole + 1
+_REFERENCE_LINE_HEIGHT = 16  # fontMetrics().height() of the default 10 pt UI font
+
+
+def reduce_motion() -> bool:
+    """True when the user wants no animation.
+
+    ``ELISIUM_REDUCE_MOTION=1`` forces it on and ``=0`` off. Otherwise a Qt that
+    exposes a reduced-motion style hint is honoured (PySide6 6.12 has none).
+    """
+    override = os.environ.get("ELISIUM_REDUCE_MOTION", "").strip()
+    if override in ("1", "0"):
+        return override == "1"
+    hints = QGuiApplication.styleHints()
+    return bool(getattr(hints, "reducedMotion", lambda: False)())
+
+
+def dialog_scale(widget: QWidget) -> float:
+    """Dialogs grow with the text, but less than 1:1 (their images do not scale)."""
+    return 1 + (font_scale(widget) - 1) * 0.6
+
+
+def font_scale(widget: QWidget) -> float:
+    """How much bigger than the default 10 pt the widget's text is (1.0 or more)."""
+    return max(1.0, widget.fontMetrics().height() / _REFERENCE_LINE_HEIGHT)
 
 
 def _quality_word(row: FormatRow) -> str:
@@ -115,7 +140,7 @@ class QualityDialog(QDialog):
         self._state = "idle"
         self.setWindowTitle("Choose quality")
         self.setAccessibleName("Choose quality")
-        self.setMinimumWidth(560)
+        self._fit_to_font()
 
         self.worker = ProbeWorker(probe, self)
         self.worker.finished.connect(self._on_probed)
@@ -124,6 +149,7 @@ class QualityDialog(QDialog):
         self.thumbnails.changed.connect(self._show_thumbnail)
 
         self._build(list(presets) if presets else list(PRESETS.values()), default_preset_id)
+        self._fit_to_font()
         self.start_probe()
 
     # -- construction ----------------------------------------------------
@@ -273,10 +299,28 @@ class QualityDialog(QDialog):
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.verticalHeader().setVisible(False)
-        table.setMaximumHeight(130)
+        table.setTabKeyNavigation(False)
         table.horizontalHeader().setStretchLastSection(True)
         table.selectionModel().selectionChanged.connect(lambda *_: self._update_selection_text())
         return table, model
+
+    # -- text size -------------------------------------------------------
+    def _fit_to_font(self) -> None:
+        """Size the dialog and its format tables from the text size (200% safe)."""
+        self.setMinimumWidth(round(560 * dialog_scale(self)))
+        for table in (getattr(self, "video_table", None), getattr(self, "audio_table", None)):
+            if table is None:
+                continue
+            header = table.horizontalHeader().sizeHint().height()
+            row = table.verticalHeader().defaultSectionSize()
+            frame = 2 * table.frameWidth()
+            table.setMinimumHeight(header + 3 * row + frame)
+            table.setMaximumHeight(header + 6 * row + frame)
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.FontChange:
+            self._fit_to_font()
 
     # -- state -----------------------------------------------------------
     @property
@@ -292,7 +336,8 @@ class QualityDialog(QDialog):
         probing = state == "probing"
         failed = state == "failed"
         ready = state == "ready"
-        self.progress.setVisible(probing)
+        # Reduced motion: no busy bar, the status text alone says "Checking...".
+        self.progress.setVisible(probing and not reduce_motion())
         self.retry_button.setVisible(failed)
         self.fix_label.setVisible(failed)
         self.details_button.setVisible(failed)
