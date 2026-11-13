@@ -42,10 +42,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from elisium_downloader.engine import runner
 from elisium_downloader.engine.queue import DownloadQueue
 
 from .bridge import QueueBridge
 from .history_page import HistoryPage
+from .playlist_dialog import PlaylistDialog
+from .quality_dialog import QualityDialog
 from .settings import Settings
 from .settings_page import SettingsPage
 from .model import COL_PROGRESS, COL_TITLE, COLUMNS, PERCENT_ROLE, DownloadModel
@@ -63,7 +66,8 @@ ACTIVE = frozenset({"probing", "downloading", "merging", "converting"})
 SHORTCUTS = (
     ("Ctrl+L", "Go to the link box"),
     ("Ctrl+V", "Paste and add links (when the list is focused)"),
-    ("Enter", "Add the link in the box"),
+    ("Enter / Ctrl+Return", "Add the link in the box (playlists ask which videos)"),
+    ("Ctrl+Shift+Return", "Choose the quality for the link in the box"),
     ("Space", "Pause or resume the selected download"),
     ("Ctrl+1 / Ctrl+2 / Ctrl+3", "Go to Downloads, History or Settings"),
     ("Ctrl+Q", "Quit"),
@@ -138,9 +142,13 @@ class MainWindow(QMainWindow):
         settings: Settings | None = None,
         settings_path: str | Path | None = None,
         version_fn: Callable[[], str | None] | None = None,
+        probe_fn: Callable[[str], dict[str, Any]] | None = None,
+        thumbnail_fetcher: Callable[..., None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.queue = queue
+        self._probe_fn = probe_fn or self._default_probe
+        self._thumbnail_fetcher = thumbnail_fetcher
         self.settings = settings or Settings()
         self._settings_path = settings_path
         self._version_fn = version_fn
@@ -183,7 +191,13 @@ class MainWindow(QMainWindow):
         )
         row.addWidget(self.url_edit, 1)
         row.addWidget(self.paste_button)
+        self.options_button = QPushButton("Options...")
+        self.options_button.setAccessibleName("Options")
+        self.options_button.setAccessibleDescription(
+            "Check the link and choose the quality before adding it."
+        )
         row.addWidget(self.add_button)
+        row.addWidget(self.options_button)
         layout.addLayout(row)
 
         self.table = QTableView()
@@ -242,6 +256,7 @@ class MainWindow(QMainWindow):
 
         self.add_button.clicked.connect(self._add_from_box)
         self.url_edit.returnPressed.connect(self._add_from_box)
+        self.options_button.clicked.connect(self.open_options)
         self.paste_button.clicked.connect(self.paste_from_clipboard)
         self.table.selectionModel().selectionChanged.connect(
             lambda *_: self._update_actions()
@@ -312,6 +327,12 @@ class MainWindow(QMainWindow):
             shortcut(f"Ctrl+{n}", lambda n=n: self.show_section(n - 1), self, window)
             for n in (1, 2, 3)
         ]
+        self._add_shortcuts = [
+            shortcut("Ctrl+Return", self._add_from_box, self, window),
+            shortcut("Ctrl+Enter", self._add_from_box, self, window),
+            shortcut("Ctrl+Shift+Return", self.open_options, self, window),
+            shortcut("Ctrl+Shift+Enter", self.open_options, self, window),
+        ]
         self._shortcuts = [
             shortcut("Ctrl+V", self.paste_from_clipboard, self.table, own),
             shortcut("Space", self.toggle_pause_resume, self.table, own),
@@ -322,7 +343,8 @@ class MainWindow(QMainWindow):
 
     def _wire_tab_order(self) -> None:
         widgets: list[QWidget] = [
-            self.url_edit, self.paste_button, self.add_button, self.table,
+            self.url_edit, self.paste_button, self.add_button, self.options_button,
+            self.table,
         ]
         for action in (
             self.pause_action, self.resume_action, self.retry_action,
@@ -415,12 +437,25 @@ class MainWindow(QMainWindow):
             return
         self.add_text(text)
 
+    def _default_probe(self, url: str) -> dict[str, Any]:
+        """Probe with the queue's own probe function and yt-dlp path."""
+        probe = getattr(self.queue, "_probe_url", runner.probe)
+        return probe(url, getattr(self.queue, "_ytdlp", "yt-dlp"))
+
     def add_text(self, text: str) -> None:
-        """Add every link in *text* and report what happened in the status bar."""
+        """Add every link in *text* and report what happened in the status bar.
+
+        Plain links are queued at once with the default preset. A link that
+        looks like a playlist or channel is probed and the playlist picker
+        opens instead, so an unknown number of videos is never queued blindly.
+        """
         urls, ignored = extract_urls(text)
+        playlists = [u for u in urls if runner._looks_like_playlist(u)]
         added = 0
         known = 0
         for url in urls:
+            if url in playlists:
+                continue
             existing = {item["id"] for item in self.queue.items()}
             try:
                 snapshot = self.queue.add(url)
@@ -434,17 +469,95 @@ class MainWindow(QMainWindow):
             if not self.model.has_item(snapshot["id"]):
                 self.model.upsert(snapshot)
         self._refresh_ui()
-        if added == 0 and known == 1 and ignored == 0:
+        if playlists and not (added or known or ignored):
+            self.statusBar().showMessage("Checking the playlist...", 5000)
+        else:
+            if added == 0 and known == 1 and ignored == 0:
+                message = "That video is already in the list"
+            else:
+                parts = []
+                if added or not (known or ignored):
+                    parts.append(f"Added {_links(added)}")
+                if known:
+                    parts.append(f"{known} already in the list")
+                if ignored:
+                    parts.append(f"{ignored} ignored")
+                message = (
+                    ", ".join(parts) if added else "No links added, " + ", ".join(parts)
+                )
+            self.statusBar().showMessage(message, 8000)
+        for url in playlists:
+            self._open_playlist(url)
+
+    # -- choose quality / playlist dialogs -------------------------------
+    def _default_preset_id(self) -> str:
+        return self.settings.preset_id
+
+    def _run_dialog(self, dialog: QDialog) -> None:
+        """Show *dialog* modally (tests replace this so nothing blocks)."""
+        dialog.exec()
+
+    def open_options(self) -> None:
+        """Probe the link in the box and open the Choose quality dialog."""
+        text = self.url_edit.text()
+        if not text.strip():
+            self.statusBar().showMessage("Paste a video link first", 5000)
+            return
+        urls, _ignored = extract_urls(text)
+        if not urls:
+            self.statusBar().showMessage("That is not a link I can use", 5000)
+            return
+        if len(urls) > 1:
+            self.statusBar().showMessage("Options works on one link at a time", 5000)
+            return
+        if runner._looks_like_playlist(urls[0]):
+            self._open_playlist(urls[0])
+        else:
+            self._open_quality(urls[0])
+
+    def _open_quality(self, url: str) -> QualityDialog:
+        dialog = QualityDialog(
+            url,
+            self.queue,
+            self._probe_fn,
+            default_preset_id=self._default_preset_id(),
+            thumbnail_fetcher=self._thumbnail_fetcher,
+            parent=self,
+        )
+        dialog.itemsAdded.connect(self._on_dialog_added)
+        self._run_dialog(dialog)
+        return dialog
+
+    def _open_playlist(self, url: str) -> PlaylistDialog:
+        dialog = PlaylistDialog(
+            url,
+            self.queue,
+            self._probe_fn,
+            default_preset_id=self._default_preset_id(),
+            parent=self,
+        )
+        dialog.itemsAdded.connect(self._on_dialog_added)
+        self._run_dialog(dialog)
+        return dialog
+
+    def _on_dialog_added(self, results: list) -> None:
+        added = known = 0
+        for snapshot, is_new in results:
+            if is_new:
+                added += 1
+            else:
+                known += 1
+            if not self.model.has_item(snapshot["id"]):
+                self.model.upsert(snapshot)
+        self.url_edit.clear()
+        self._refresh_ui()
+        if added == 0 and known == 1 and len(results) == 1:
             message = "That video is already in the list"
         else:
-            parts = []
-            if added or not (known or ignored):
-                parts.append(f"Added {_links(added)}")
+            parts = [f"Added {_links(added)}"]
             if known:
                 parts.append(f"{known} already in the list")
-            if ignored:
-                parts.append(f"{ignored} ignored")
-            message = ", ".join(parts) if added else "No links added, " + ", ".join(parts)
+            message = ", ".join(parts)
         self.statusBar().showMessage(message, 8000)
 
     # -- actions ---------------------------------------------------------

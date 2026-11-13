@@ -133,6 +133,10 @@ class QueueItem:
     # ``<extractor>:<id>`` as yt-dlp archives it, learned from the probe for
     # sites where ``video_key`` is None (not part of the snapshot).
     archive_key: str | None = None
+    # Per-item overrides from the "Choose quality" dialogs; ``None`` means
+    # "use the queue default" (an empty ``extra_args`` tuple is a real override).
+    format_selector: str | None = None
+    extra_args: tuple[str, ...] | None = None
 
     def snapshot(self) -> dict[str, Any]:
         """A plain-dict view for the UI and for events."""
@@ -290,8 +294,20 @@ class DownloadQueue:
             ]
 
     # -- adding ----------------------------------------------------------
-    def add(self, url: str) -> dict[str, Any]:
+    def add(
+        self,
+        url: str,
+        *,
+        format_selector: str | None = None,
+        extra_args: Sequence[str] | None = None,
+        title: str | None = None,
+    ) -> dict[str, Any]:
         """Queue *url*; a duplicate of an existing item returns that item.
+
+        *format_selector* and *extra_args* override the queue defaults for this
+        item only; *title* is shown until the probe supplies the real one. A
+        duplicate keeps its original overrides (the existing item is returned
+        unchanged).
 
         Raises ``ValueError`` for a URL that cannot be normalised.
         """
@@ -318,6 +334,9 @@ class DownloadQueue:
                 url=clean,
                 identity=identity,
                 video_key=key,
+                title=title.strip() if isinstance(title, str) and title.strip() else None,
+                format_selector=format_selector or None,
+                extra_args=None if extra_args is None else tuple(str(a) for a in extra_args),
             )
             self._next_id += 1
             self._items[item.id] = item
@@ -705,9 +724,11 @@ class DownloadQueue:
         except OSError:
             pass
         with self._cond:
-            selector = self._format_selector
+            selector = item.format_selector or self._format_selector
             limit = self._limit_rate
-            extra = self._extra_args
+            extra = (
+                item.extra_args if item.extra_args is not None else self._extra_args
+            )
         opts = runner.DownloadOptions(
             url=item.url,
             output_dir=self.output_dir,

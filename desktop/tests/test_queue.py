@@ -821,3 +821,61 @@ def test_setters_apply_to_next_started_download(harness) -> None:
 def test_set_format_selector_rejects_empty(harness) -> None:
     with pytest.raises(ValueError):
         harness().queue.set_format_selector("")
+
+
+# -- per-item overrides (brief 2C) ----------------------------------------
+def _recording_harness(harness, seen: list):
+    def fake_run(opts, on_event):
+        seen.append(opts)
+        return FakeHandle()
+
+    return harness(probe_url=lambda url, ytdlp="yt-dlp": {"title": "Probed"}, run_download=fake_run)
+
+
+def test_item_overrides_beat_queue_defaults(harness) -> None:
+    seen: list = []
+    h = _recording_harness(harness, seen)
+    h.queue.set_format_selector("best")
+    h.queue.set_extra_args(["-x"])
+    h.queue.add(
+        "https://vimeo.com/1",
+        format_selector="137+140",
+        extra_args=["--remux-video", "mp4"],
+        title="Shown first",
+    )
+    h.queue.add("https://vimeo.com/2")  # no overrides: queue defaults
+    h.queue.start()
+    assert h.queue.wait_until_idle(15)
+    by_url = {o.url: o for o in seen}
+    assert by_url["https://vimeo.com/1"].format_selector == "137+140"
+    assert tuple(by_url["https://vimeo.com/1"].extra_args) == ("--remux-video", "mp4")
+    assert by_url["https://vimeo.com/2"].format_selector == "best"
+    assert tuple(by_url["https://vimeo.com/2"].extra_args) == ("-x",)
+
+
+def test_empty_extra_args_override_still_wins(harness) -> None:
+    seen: list = []
+    h = _recording_harness(harness, seen)
+    h.queue.set_extra_args(["-x", "--audio-format", "mp3"])
+    h.queue.add("https://vimeo.com/1", format_selector="22", extra_args=())
+    h.queue.start()
+    assert h.queue.wait_until_idle(15)
+    assert tuple(seen[0].extra_args) == ()
+
+
+def test_title_override_is_shown_before_the_probe(harness) -> None:
+    h = harness()
+    item = h.queue.add("https://vimeo.com/1", title="  Chosen title ")
+    assert item["title"] == "Chosen title"
+
+
+def test_duplicate_add_keeps_original_overrides(harness) -> None:
+    seen: list = []
+    h = _recording_harness(harness, seen)
+    first = h.queue.add("https://vimeo.com/1", format_selector="137+140")
+    again = h.queue.add("https://vimeo.com/1", format_selector="18", extra_args=["-x"])
+    assert again == first
+    h.queue.start()
+    assert h.queue.wait_until_idle(15)
+    assert len(seen) == 1 and seen[0].format_selector == "137+140"
+    assert tuple(seen[0].extra_args) == ()
