@@ -392,7 +392,9 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(COL_TITLE, QHeaderView.ResizeMode.Stretch)
         for column in range(1, len(COLUMNS)):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
-        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # A tiling compositor (Hyprland) can squeeze the window below the
+        # table's minimum width; scroll sideways then instead of clipping.
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         layout.addWidget(self.table, 1)
 
         self.history_page = HistoryPage(self.queue, self.bridge)
