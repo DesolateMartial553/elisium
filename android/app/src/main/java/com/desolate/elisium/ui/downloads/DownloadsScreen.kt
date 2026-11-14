@@ -7,24 +7,19 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -40,12 +35,24 @@ import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.desolate.elisium.R
+import com.desolate.elisium.ui.components.AfterglowPreviews
+import com.desolate.elisium.ui.components.ElisiumButton
+import com.desolate.elisium.ui.components.ElisiumCard
+import com.desolate.elisium.ui.components.ElisiumOutlinedButton
+import com.desolate.elisium.ui.components.ElisiumTextButton
+import com.desolate.elisium.ui.components.ElisiumTextField
+import com.desolate.elisium.ui.components.EmptyState
+import com.desolate.elisium.ui.components.GlowProgress
+import com.desolate.elisium.ui.components.GlowState
+import com.desolate.elisium.ui.components.StateChip
+import com.desolate.elisium.ui.components.TintedBanner
+import com.desolate.elisium.ui.components.enterRise
 import com.desolate.elisium.ui.stateLabelRes
 import com.desolate.elisium.ui.theme.ElisiumTheme
+import com.desolate.elisium.ui.theme.NumericStyle
 import kotlinx.coroutines.launch
 
 @Composable
@@ -57,6 +64,9 @@ fun DownloadsScreen(vm: QueueViewModel, modifier: Modifier = Modifier) {
     var input by rememberSaveable { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboard.current
+    val reduced = ElisiumTheme.extras.reducedMotion
+    // Rows that already played their enter animation (so scrolling back does not replay it).
+    val seen = remember { HashSet<Int>() }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -83,21 +93,18 @@ fun DownloadsScreen(vm: QueueViewModel, modifier: Modifier = Modifier) {
                 Text(
                     text = announcement,
                     style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
                 )
             }
         }
         if (rows.isEmpty()) {
-            item(key = "empty") {
-                Text(
-                    text = stringResource(R.string.downloads_empty),
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.padding(vertical = 24.dp),
-                )
-            }
+            item(key = "empty") { EmptyState(stringResource(R.string.downloads_empty)) }
         }
         items(rows, key = { it.id }) { row ->
+            val firstTime = seen.add(row.id)
             QueueRow(
+                modifier = (if (reduced) Modifier else Modifier.animateItem()).enterRise(firstTime),
                 row = row,
                 onPause = { vm.pause(row.id) },
                 onResume = { vm.resume(row.id) },
@@ -126,8 +133,8 @@ fun DownloadsScreen(vm: QueueViewModel, modifier: Modifier = Modifier) {
                     },
                 )
             },
-            confirmButton = { TextButton(onClick = vm::confirmCancel) { Text(stringResource(R.string.cancel_confirm)) } },
-            dismissButton = { TextButton(onClick = vm::dismissCancel) { Text(stringResource(R.string.cancel_keep)) } },
+            confirmButton = { ElisiumTextButton(stringResource(R.string.cancel_confirm), vm::confirmCancel) },
+            dismissButton = { ElisiumTextButton(stringResource(R.string.cancel_keep), vm::dismissCancel) },
         )
     }
 }
@@ -135,24 +142,19 @@ fun DownloadsScreen(vm: QueueViewModel, modifier: Modifier = Modifier) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AddLinkRow(text: String, onTextChange: (String) -> Unit, onAdd: () -> Unit, onPaste: () -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        ElisiumTextField(
             value = text,
             onValueChange = onTextChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text(stringResource(R.string.add_link_label)) },
-            supportingText = { Text(stringResource(R.string.add_link_hint)) },
+            label = stringResource(R.string.add_link_label),
+            supportingText = stringResource(R.string.add_link_hint),
             maxLines = 4,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { if (text.isNotBlank()) onAdd() }),
         )
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onAdd, enabled = text.isNotBlank(), modifier = Modifier.heightIn(min = 48.dp)) {
-                Text(stringResource(R.string.add_link_button))
-            }
-            OutlinedButton(onClick = onPaste, modifier = Modifier.heightIn(min = 48.dp)) {
-                Text(stringResource(R.string.paste_button))
-            }
+            ElisiumButton(stringResource(R.string.add_link_button), onAdd, enabled = text.isNotBlank())
+            ElisiumOutlinedButton(stringResource(R.string.paste_button), onPaste)
         }
     }
 }
@@ -164,12 +166,8 @@ fun BannerCard(banner: Banner) {
         is Banner.ServiceProblem -> stringResource(R.string.banner_service_title) to
             stringResource(R.string.banner_service_body, banner.message)
     }
-    Card(modifier = Modifier.fillMaxWidth().semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall)
-            Text(body, style = MaterialTheme.typography.bodyMedium)
-        }
-    }
+    val tint = if (banner is Banner.ServiceProblem) ElisiumTheme.extras.error else ElisiumTheme.extras.warning
+    TintedBanner(tint = tint, title = title, body = body)
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -180,6 +178,7 @@ fun QueueRow(
     onResume: () -> Unit,
     onCancel: () -> Unit,
     onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val stateWord = stringResource(stateLabelRes(row.state))
     val showPercent = row.percent != null && (row.state == "paused" || row.showProgress)
@@ -187,47 +186,56 @@ fun QueueRow(
     val errorLine = row.errorMessage?.let { m -> listOfNotNull(m, row.errorFix).joinToString(" ") }
     val spoken = spokenRow(row.title, stateWord, percentWord, row, errorLine)
     val fraction = row.percent?.let { it / 100f }
+    val glowState = when (row.state) {
+        "paused" -> GlowState.Paused
+        "done" -> GlowState.Done
+        "failed" -> GlowState.Failed
+        else -> GlowState.Active
+    }
 
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            // One node for a screen reader: "title, state, percent, speed, time left".
-            Column(
-                modifier = Modifier.fillMaxWidth().clearAndSetSemantics {
-                    contentDescription = spoken
-                    if (row.showProgress && fraction != null && !row.indeterminate) {
-                        progressBarRangeInfo = ProgressBarRangeInfo(fraction, 0f..1f)
-                    }
-                },
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Text(row.title, style = MaterialTheme.typography.titleMedium)
-                // The state is always a word, never only a colour.
-                Text(stateWord, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                if (row.showProgress) {
-                    if (row.indeterminate || fraction == null) {
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    } else {
-                        LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
-                    }
+    ElisiumCard(modifier = modifier, active = row.state == "downloading") {
+        // One node for a screen reader: "title, state, percent, speed, time left".
+        Column(
+            modifier = Modifier.fillMaxWidth().clearAndSetSemantics {
+                contentDescription = spoken
+                if (row.showProgress && fraction != null && !row.indeterminate) {
+                    progressBarRangeInfo = ProgressBarRangeInfo(fraction, 0f..1f)
                 }
-                if (row.details.isNotEmpty()) Text(row.details, style = MaterialTheme.typography.bodyMedium)
-                if (errorLine != null) Text(errorLine, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+            },
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(row.title, style = MaterialTheme.typography.titleMedium)
+            // The state is always a word (inside the chip), never only a colour.
+            StateChip(row.state, stateWord)
+            if (row.showProgress) {
+                GlowProgress(
+                    fraction = if (row.indeterminate) null else fraction,
+                    state = glowState,
+                )
             }
-            if (row.actions.isNotEmpty()) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    for (action in row.actions) {
-                        val (label, description, click) = when (action) {
-                            RowAction.Pause -> Triple(R.string.action_pause, R.string.action_pause_for, onPause)
-                            RowAction.Resume -> Triple(R.string.action_resume, R.string.action_resume_for, onResume)
-                            RowAction.Cancel -> Triple(R.string.action_cancel, R.string.action_cancel_for, onCancel)
-                            RowAction.Retry -> Triple(R.string.action_retry, R.string.action_retry_for, onRetry)
-                        }
-                        val describe = stringResource(description, row.title)
-                        OutlinedButton(
-                            onClick = click,
-                            modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = describe },
-                        ) { Text(stringResource(label)) }
+            if (row.details.isNotEmpty()) {
+                Text(
+                    row.details,
+                    style = MaterialTheme.typography.bodyMedium.merge(NumericStyle),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (errorLine != null) Text(errorLine, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+        }
+        if (row.actions.isNotEmpty()) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (action in row.actions) {
+                    val (label, description, click) = when (action) {
+                        RowAction.Pause -> Triple(R.string.action_pause, R.string.action_pause_for, onPause)
+                        RowAction.Resume -> Triple(R.string.action_resume, R.string.action_resume_for, onResume)
+                        RowAction.Cancel -> Triple(R.string.action_cancel, R.string.action_cancel_for, onCancel)
+                        RowAction.Retry -> Triple(R.string.action_retry, R.string.action_retry_for, onRetry)
                     }
+                    ElisiumOutlinedButton(
+                        text = stringResource(label),
+                        onClick = click,
+                        description = stringResource(description, row.title),
+                    )
                 }
             }
         }
@@ -241,7 +249,7 @@ private fun previewRow(state: String, percent: Int? = null) = QueueRowModel(
     percent = percent,
     showProgress = state == "downloading",
     indeterminate = state == "downloading" && percent == null,
-    details = if (state == "downloading") "12.4 MB of 80 MB - 2.1 MB/s - 40s left" else "",
+    details = if (state == "downloading") "2.1 MB/s - 12.4 MB of 80 MB - 40s left" else "",
     speedSpoken = "2.1 megabytes per second",
     etaSpoken = "40 seconds left",
     errorMessage = if (state == "failed") "Network problem." else null,
@@ -249,14 +257,30 @@ private fun previewRow(state: String, percent: Int? = null) = QueueRowModel(
     actions = validActions(state),
 )
 
-@Preview(showBackground = true)
+@AfterglowPreviews
 @Composable
-private fun QueueRowDownloadingPreview() {
-    ElisiumTheme { QueueRow(previewRow("downloading", 42), {}, {}, {}, {}) }
+private fun QueueRowsPreview() {
+    ElisiumTheme {
+        Surface(color = MaterialTheme.colorScheme.background) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                QueueRow(previewRow("downloading", 42), {}, {}, {}, {})
+                QueueRow(previewRow("paused", 60), {}, {}, {}, {})
+                QueueRow(previewRow("failed"), {}, {}, {}, {})
+            }
+        }
+    }
 }
 
-@Preview(showBackground = true, fontScale = 2f)
+@AfterglowPreviews
 @Composable
-private fun QueueRowFailedLargeTextPreview() {
-    ElisiumTheme { QueueRow(previewRow("failed"), {}, {}, {}, {}) }
+private fun AddLinkPreview() {
+    ElisiumTheme {
+        Surface(color = MaterialTheme.colorScheme.background) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                AddLinkRow("https://example.com/watch?v=1", {}, {}, {})
+                BannerCard(Banner.WaitingForWifi)
+                EmptyState(stringResource(R.string.downloads_empty))
+            }
+        }
+    }
 }

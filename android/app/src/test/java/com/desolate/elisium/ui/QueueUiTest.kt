@@ -73,7 +73,7 @@ class QueueUiTest {
         assertEquals(16, row.percent)
         assertTrue(row.showProgress)
         assertFalse(row.indeterminate)
-        assertEquals("12.0 MB of 80.0 MB - 2.0 MB/s - 40s left", row.details)
+        assertEquals("2.0 MB/s - 12.0 MB of 80.0 MB - 40s left", row.details)
         assertEquals("2.0 megabytes per second", row.speedSpoken)
         assertEquals("40 seconds left", row.etaSpoken)
         assertNull(row.errorMessage)

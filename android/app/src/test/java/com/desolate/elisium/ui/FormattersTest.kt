@@ -49,10 +49,10 @@ class FormattersTest {
     @Test fun progressLineJoinsKnownParts() {
         val mb = 1024L * 1024
         assertEquals(
-            "12.4 MB of 80.0 MB - 2.1 MB/s - 40s left",
+            "2.1 MB/s - 12.4 MB of 80.0 MB - 40s left",
             progressLine((12.4 * mb).toLong(), 80 * mb, 2.1 * mb, 40.0),
         )
-        assertEquals("5.0 MB - 1.0 MB/s", progressLine(5 * mb, null, 1.0 * mb, null))
+        assertEquals("1.0 MB/s - 5.0 MB", progressLine(5 * mb, null, 1.0 * mb, null))
         assertEquals("", progressLine(null, null, null, null))
         assertEquals("40s left", progressLine(null, null, null, 40.0))
         assertEquals("5.0 MB", progressLine(5 * mb, 0L, null, null))

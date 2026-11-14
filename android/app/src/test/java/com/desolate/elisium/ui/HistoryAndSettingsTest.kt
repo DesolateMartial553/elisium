@@ -162,6 +162,8 @@ class FakeSettingsStore(initial: Settings = Settings()) : SettingsStore {
     override suspend fun setPresetId(id: String) { state.value = state.value.copy(presetId = id) }
     override suspend fun setWifiOnly(value: Boolean) { state.value = state.value.copy(wifiOnly = value) }
     override suspend fun setNotifyOnDone(value: Boolean) { state.value = state.value.copy(notifyOnDone = value) }
+    override suspend fun setAppearance(value: com.desolate.elisium.settings.Appearance) { state.value = state.value.copy(appearance = value) }
+    override suspend fun setReduceMotion(value: Boolean) { state.value = state.value.copy(reduceMotion = value) }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)

@@ -8,7 +8,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -19,6 +18,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat
 import com.desolate.elisium.R
+import com.desolate.elisium.ui.components.ElisiumTextButton
 import kotlinx.coroutines.flow.Flow
 
 /** Remembers which permissions were already asked about (once each, ever). */
@@ -68,7 +68,7 @@ fun PermissionHost(linksAdded: Flow<Int>) {
         },
         text = { Text(stringResource(rationaleRes(kind))) },
         confirmButton = {
-            TextButton(onClick = {
+            ElisiumTextButton(stringResource(R.string.perm_continue), onClick = {
                 prefs.markAsked(kind)
                 pending = null
                 when (kind) {
@@ -76,13 +76,13 @@ fun PermissionHost(linksAdded: Flow<Int>) {
                         if (Build.VERSION.SDK_INT >= 33) notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                     PermissionKind.Storage -> storageLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
                 }
-            }) { Text(stringResource(R.string.perm_continue)) }
+            })
         },
         dismissButton = {
-            TextButton(onClick = {
+            ElisiumTextButton(stringResource(R.string.perm_not_now), onClick = {
                 prefs.markAsked(kind)
                 pending = null
-            }) { Text(stringResource(R.string.perm_not_now)) }
+            })
         },
     )
 }

@@ -1,6 +1,20 @@
 package com.desolate.elisium.ui
 
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.Snackbar
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import com.desolate.elisium.ui.components.HorizonHeader
+import com.desolate.elisium.ui.components.TintedBanner
+import com.desolate.elisium.ui.theme.ElisiumTheme
+import com.desolate.elisium.ui.theme.Motion
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -12,7 +26,6 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -22,7 +35,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -54,7 +66,6 @@ private enum class Tab(val titleRes: Int, val icon: ImageVector) {
 }
 
 /** Scaffold with the bottom navigation, the engine status line and the Snackbar host. Compile-verified only. */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ElisiumShell(vm: ElisiumViewModel, engine: EngineState) {
     var tabIndex by rememberSaveable { mutableIntStateOf(0) }
@@ -69,9 +80,10 @@ fun ElisiumShell(vm: ElisiumViewModel, engine: EngineState) {
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                title = { Text(stringResource(tab.titleRes)) },
+            HorizonHeader(
+                title = stringResource(if (tab == Tab.Downloads) R.string.app_name else tab.titleRes),
                 actions = {
                     if (tab == Tab.Downloads) {
                         var open by remember { mutableStateOf(false) }
@@ -95,26 +107,62 @@ fun ElisiumShell(vm: ElisiumViewModel, engine: EngineState) {
             )
         },
         bottomBar = {
-            NavigationBar {
+            val line = ElisiumTheme.extras.outline
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surface,
+                tonalElevation = 0.dp,
+                modifier = Modifier.drawBehind {
+                    drawLine(line, Offset(0f, 0f), Offset(size.width, 0f), strokeWidth = 1.dp.toPx())
+                },
+            ) {
                 for (t in Tab.entries) {
                     NavigationBarItem(
                         selected = t == tab,
                         onClick = { tabIndex = t.ordinal },
                         icon = { Icon(t.icon, contentDescription = null) },
-                        label = { Text(stringResource(t.titleRes)) },
+                        label = { Text(stringResource(t.titleRes), style = MaterialTheme.typography.labelMedium) },
                         alwaysShowLabel = true,
+                        colors = NavigationBarItemDefaults.colors(
+                            indicatorColor = MaterialTheme.colorScheme.primary,
+                            selectedIconColor = MaterialTheme.colorScheme.onPrimary,
+                            selectedTextColor = MaterialTheme.colorScheme.onSurface,
+                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        ),
                     )
                 }
             }
         },
-        snackbarHost = { SnackbarHost(snackbar) },
+        snackbarHost = {
+            SnackbarHost(snackbar) { data ->
+                Snackbar(
+                    snackbarData = data,
+                    shape = MaterialTheme.shapes.medium,
+                    containerColor = ElisiumTheme.extras.raised,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    actionColor = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.border(1.dp, ElisiumTheme.extras.glowBrush(), MaterialTheme.shapes.medium),
+                )
+            }
+        },
     ) { padding ->
-        Column(Modifier.padding(padding).fillMaxSize()) {
+        Column(Modifier.padding(padding).consumeWindowInsets(padding).imePadding().fillMaxSize()) {
             EngineStatus(engine)
-            when (tab) {
-                Tab.Downloads -> DownloadsScreen(vm.queue, Modifier.weight(1f))
-                Tab.History -> HistoryScreen(vm.history, showMessage = { vm.postMessage(it) }, modifier = Modifier.weight(1f))
-                Tab.Settings -> SettingsScreen(vm.settings, engine, Modifier.weight(1f))
+            val reduced = ElisiumTheme.extras.reducedMotion
+            // Tab change cross-fades over the base duration (instant when motion is reduced).
+            AnimatedContent(
+                targetState = tab,
+                modifier = Modifier.weight(1f),
+                transitionSpec = {
+                    (fadeIn(Motion.spec(Motion.BASE_MS, reduced)) togetherWith fadeOut(Motion.spec(Motion.FAST_MS, reduced)))
+                },
+                label = "tab",
+            ) { current ->
+                when (current) {
+                    Tab.Downloads -> DownloadsScreen(vm.queue, Modifier.fillMaxSize())
+                    Tab.History -> HistoryScreen(vm.history, showMessage = { vm.postMessage(it) }, modifier = Modifier.fillMaxSize())
+                    Tab.Settings -> SettingsScreen(vm.settings, engine, Modifier.fillMaxSize())
+                }
             }
         }
     }
@@ -136,16 +184,16 @@ private fun EngineStatus(engine: EngineState) {
         EngineState.Starting -> Text(
             text = stringResource(R.string.engine_starting),
             style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)
                 .semantics { liveRegion = LiveRegionMode.Polite },
         )
-        is EngineState.Failed -> Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp).semantics { liveRegion = LiveRegionMode.Polite },
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text(stringResource(R.string.engine_failed_title), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.error)
-            Text(stringResource(R.string.engine_failed_body, engine.message), style = MaterialTheme.typography.bodyMedium)
-        }
+        is EngineState.Failed -> TintedBanner(
+            tint = ElisiumTheme.extras.error,
+            title = stringResource(R.string.engine_failed_title),
+            body = stringResource(R.string.engine_failed_body, engine.message),
+            modifier = Modifier.padding(16.dp),
+        )
         is EngineState.Ready -> Unit
     }
 }

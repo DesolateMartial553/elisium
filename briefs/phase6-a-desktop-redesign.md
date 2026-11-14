@@ -1,0 +1,29 @@
+# Brief 6A - Desktop redesign ("Afterglow")
+
+The owner wants the apps to be much more beautiful and unique. Read `design/DESIGN.md`, `design/tokens.json`, `AGENTS.md` (the "Visual design" section overrides the old Qt-theme rule), then every file in `desktop/elisium_downloader/ui/` and `desktop/ACCESSIBILITY.md`. Fonts are already bundled in `ui/fonts/` (Inter 400/500/600/700/800 + OFL licence).
+
+Edit only under `desktop/` (code, tests) and write `briefs/phase6-a-desktop-redesign.result.md`. Do not touch `android/`, `design/` (report token problems instead), commit or push.
+
+## Build
+1. **Theme module** `ui/theme.py`: loads tokens (copy the values into a Python dict generated from `design/tokens.json` at build time is NOT possible; instead embed them in `theme.py` with a unit test that asserts they equal `design/tokens.json`, so drift fails the test). Provides `Palette` for night/day, `resolve_scheme(setting, system_scheme)` (System/Night/Day; system via `QGuiApplication.styleHints().colorScheme()`, fallback night), `build_stylesheet(palette)` (QSS for the whole app: window, toolbar, buttons incl. primary-accent button, line edit, combo, checkbox/radio/switch-like toggles, scrollbars, menus, tooltips, tabs/sidebar, dialogs, status bar, table/list), and `apply(app, setting)` that also sets a matching `QPalette` (so native-drawn bits and disabled states are right) and loads the bundled Inter via `QFontDatabase.addApplicationFont` (fall back to the system font if loading fails). Live-switch when the system scheme changes while setting is System.
+2. **Glow progress** as a custom delegate/widget: rounded thick bar filled with the glowA->glowB->glowC gradient and a soft glowing leading cap (draw with `QLinearGradient` + a blurred/alpha-layered cap; no external deps); paused = muted; done = success; failed = error; percent text drawn beside it. Breathing animation of the cap while downloading via a single shared `QVariantAnimation` (not one per row); disabled when "Reduce motion" is on.
+3. **Queue as cards** (not a gridded table): keep the model and the accessible names; replace the visual presentation with a custom item delegate that paints rounded `raised` cards (radius medium, 1px outline; the selected card gets a gradient border), title, state chip (icon + word), glow progress, "speed - size - time left" line, and per-card actions only if the current toolbar already offers them (do not remove existing actions or shortcuts). Row height adapts to font scale. Keep the narrow-window behaviour (hide low-priority info when tiled narrow).
+4. **Horizon header**: the window top shows the wordmark "Elisium" (Inter 800, gradient fill via `QLinearGradient` painter) over a faint glow band; sidebar/nav restyled (rounded selected pill with accent). Empty state: large soft glowing glyph (paint the arrow-into-tray from the icon) + one warm sentence ("Paste a link to begin").
+5. **Restyle** the History page, Settings page, Choose-quality dialog, playlist picker and tray menu to the same system (cards, chips, rounded inputs, visible 2px accent focus ring, tokens only). History rows become cards too.
+6. **Settings additions** (`ui/settings.py` + settings page): "Appearance: System / Night / Day" and "Reduce motion" switch; persisted with existing settings code; default System and off. Add tests for load/save and defaults (old settings files without these keys must still load).
+7. **Icon**: redraw `packaging/elisium.svg` per DESIGN.md (arrow-into-tray glyph in glow gradient on an ink-violet rounded square with a faint horizon line). Valid SVG, renders at 16-256px; keep the file name.
+8. **Screenshots**: write a script `desktop/tools/render_screenshots.py` (offscreen, temp XDG dirs, sample data, no network) that renders queue (several states incl. downloading/done/failed/paused), empty state, history, settings, choose-quality and playlist picker, in BOTH Night and Day, at 1x and at a larger font scale, to `docs/screenshots/` using names `queue-night.png`, `queue-day.png`, `history-night.png`, `settings-night.png`, `choose-quality-night.png`, `playlist-night.png`, `empty-night.png` (and day variants of at least queue and settings). Look at the images yourself and fix what looks wrong (clipped text, bad spacing, low contrast, ugly gradient banding). Delete the old `queue.png`, `history.png`, `settings.png`, `choose-quality.png`, `playlist.png` in that folder (the README will be updated by Claude).
+
+## Tests
+Keep all existing tests passing (446 + 1 skipped); update tests that asserted old visuals, but never weaken accessible-name/role/shortcut assertions. Add tests: tokens equal `design/tokens.json`; contrast of every token pair used in the stylesheet >= the limits in `design/contrast_check.py` (import its function by path or reimplement identically); scheme resolution; glow progress paints without error for 0/37/100% and each state; delegate size hint grows with font scale; reduced-motion disables the animation; app starts in both schemes offscreen.
+
+## Acceptance (paste real output)
+```
+cd desktop && QT_QPA_PLATFORM=offscreen nice .venv/bin/python -m pytest -q
+python3 ../design/contrast_check.py | tail -1
+QT_QPA_PLATFORM=offscreen nice .venv/bin/python tools/render_screenshots.py
+```
+Then view the screenshots (Read tool on the PNGs) and iterate until they look genuinely polished: consistent padding, aligned baselines, nothing clipped, readable in both themes. Describe in the result file what you changed after looking.
+
+## Do not
+Hard-code colours outside `theme.py` (grep to prove it), remove accessibility features, add dependencies, touch the real home/config (temp XDG dirs for every run), use KDE-only APIs. Write the result file even if low on budget; list anything unfinished and what is unverified (real Hyprland, real HyDE/qt6ct interaction, Orca).

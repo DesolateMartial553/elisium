@@ -3,6 +3,7 @@ package com.desolate.elisium.ui.settings
 import com.desolate.elisium.engine.MAX_CONCURRENCY
 import com.desolate.elisium.engine.Preset
 import com.desolate.elisium.engine.Presets
+import com.desolate.elisium.settings.Appearance
 import com.desolate.elisium.settings.SettingsStore
 import com.desolate.elisium.settings.validSpeedLimit
 import kotlinx.coroutines.CoroutineScope
@@ -31,6 +32,8 @@ data class SettingsUiState(
     val speedLimitError: SpeedLimitError? = null,
     val wifiOnly: Boolean = true,
     val notifyOnDone: Boolean = true,
+    val appearance: Appearance = Appearance.System,
+    val reduceMotion: Boolean = false,
 ) {
     val canDecrease: Boolean get() = concurrency > 1
     val canIncrease: Boolean get() = concurrency < MAX_CONCURRENCY
@@ -52,6 +55,8 @@ class SettingsViewModel(private val store: SettingsStore, private val scope: Cor
             speedLimitError = speedLimitError(shown),
             wifiOnly = s.wifiOnly,
             notifyOnDone = s.notifyOnDone,
+            appearance = s.appearance,
+            reduceMotion = s.reduceMotion,
         )
     }.stateIn(scope, SharingStarted.Eagerly, SettingsUiState())
 
@@ -82,5 +87,13 @@ class SettingsViewModel(private val store: SettingsStore, private val scope: Cor
 
     fun setNotifyOnDone(value: Boolean) {
         scope.launch { store.setNotifyOnDone(value) }
+    }
+
+    fun setAppearance(value: Appearance) {
+        scope.launch { store.setAppearance(value) }
+    }
+
+    fun setReduceMotion(value: Boolean) {
+        scope.launch { store.setReduceMotion(value) }
     }
 }

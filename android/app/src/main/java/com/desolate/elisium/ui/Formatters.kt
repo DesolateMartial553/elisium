@@ -79,7 +79,7 @@ fun etaWords(value: Double?): String {
 }
 
 /**
- * The visible detail line: "12.4 MB of 80 MB - 2.1 MB/s - 40s left". Parts that are not known
+ * The visible detail line: "2.1 MB/s - 12.4 MB of 80 MB - 40s left". Parts that are not known
  * are left out, so a download without a size shows only what it has.
  */
 fun progressLine(downloaded: Long?, total: Long?, speed: Double?, eta: Double?): String {
@@ -89,7 +89,7 @@ fun progressLine(downloaded: Long?, total: Long?, speed: Double?, eta: Double?):
         else -> ""
     }
     val left = formatEta(eta).let { if (it.isEmpty()) "" else "$it left" }
-    return listOf(size, formatSpeed(speed), left).filter { it.isNotEmpty() }.joinToString(" - ")
+    return listOf(formatSpeed(speed), size, left).filter { it.isNotEmpty() }.joinToString(" - ")
 }
 
 /** Host of [url] without "www.", or the URL itself when it has none. */

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Launch theme: window background matches Daybreak so there is no dark flash before Compose draws. -->
+    <style name="Theme.Elisium" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/elisium_window_bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>

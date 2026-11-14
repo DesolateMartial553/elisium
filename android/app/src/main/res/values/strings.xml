@@ -22,7 +22,7 @@
     <string name="paste_button">Paste from clipboard</string>
 
     <!-- Queue -->
-    <string name="downloads_empty">Nothing in the list yet. Paste a link above, or open a video in any app and share it to Elisium.</string>
+    <string name="downloads_empty">Paste a link to begin, or share a video to Elisium from any app.</string>
     <string name="percent_spoken">%1$d percent</string>
     <string name="state_queued">Waiting in line</string>
     <string name="state_probing">Checking the link</string>
@@ -55,7 +55,7 @@
 
     <!-- History -->
     <string name="history_search_label">Search your history</string>
-    <string name="history_empty">Nothing here yet. Finished and failed downloads show up in this list.</string>
+    <string name="history_empty">Your finished downloads will gather here.</string>
     <string name="history_no_matches">No history entry matches that search.</string>
     <string name="history_file_missing">File no longer exists</string>
     <string name="history_no_app">No app on this phone can open that file.</string>
@@ -70,6 +70,14 @@
     <string name="history_delete_for">Remove %1$s from history, the downloaded file is kept</string>
 
     <!-- Settings -->
+    <string name="settings_appearance">Appearance</string>
+    <string name="settings_appearance_help">Follow your phone, or always use one look.</string>
+    <string name="appearance_system">Same as my phone</string>
+    <string name="appearance_night">Night</string>
+    <string name="appearance_day">Day</string>
+    <string name="settings_reduce_motion">Reduce motion</string>
+    <string name="settings_reduce_motion_help">No gentle glow pulse and no sliding in. Changes happen at once.</string>
+    <string name="settings_notifications_off_title">Notifications are off</string>
     <string name="settings_quality">Quality</string>
     <string name="settings_quality_help">Used for every new download.</string>
     <string name="settings_concurrency">Downloads at the same time</string>

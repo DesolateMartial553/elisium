@@ -22,6 +22,8 @@ interface SettingsStore {
     suspend fun setPresetId(id: String)
     suspend fun setWifiOnly(value: Boolean)
     suspend fun setNotifyOnDone(value: Boolean)
+    suspend fun setAppearance(value: Appearance)
+    suspend fun setReduceMotion(value: Boolean)
 }
 
 /**
@@ -63,12 +65,22 @@ class SettingsRepository(context: Context) : SettingsStore {
         store.edit { it[NOTIFY] = value }
     }
 
+    override suspend fun setAppearance(value: Appearance) {
+        store.edit { it[APPEARANCE] = value.storedValue }
+    }
+
+    override suspend fun setReduceMotion(value: Boolean) {
+        store.edit { it[REDUCE_MOTION] = value }
+    }
+
     private fun Preferences.toSettings() = Settings(
         concurrency = this[CONCURRENCY] ?: Settings().concurrency,
         speedLimit = this[SPEED_LIMIT],
         presetId = this[PRESET] ?: Settings().presetId,
         wifiOnly = this[WIFI_ONLY] ?: Settings().wifiOnly,
         notifyOnDone = this[NOTIFY] ?: Settings().notifyOnDone,
+        appearance = Appearance.fromStored(this[APPEARANCE]),
+        reduceMotion = this[REDUCE_MOTION] ?: Settings().reduceMotion,
     ).validated()
 
     private companion object {
@@ -77,5 +89,7 @@ class SettingsRepository(context: Context) : SettingsStore {
         val PRESET = stringPreferencesKey("preset_id")
         val WIFI_ONLY = booleanPreferencesKey("wifi_only")
         val NOTIFY = booleanPreferencesKey("notify_on_done")
+        val APPEARANCE = stringPreferencesKey("appearance")
+        val REDUCE_MOTION = booleanPreferencesKey("reduce_motion")
     }
 }

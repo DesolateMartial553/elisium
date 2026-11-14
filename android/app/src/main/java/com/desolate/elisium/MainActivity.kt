@@ -7,6 +7,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.desolate.elisium.settings.Settings
 import com.desolate.elisium.ui.ElisiumShell
 import com.desolate.elisium.ui.ElisiumViewModel
 import com.desolate.elisium.ui.theme.ElisiumTheme
@@ -18,7 +19,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val app = application as ElisiumApp
         setContent {
-            ElisiumTheme {
+            val settings by app.settingsRepository.settings.collectAsStateWithLifecycle(Settings())
+            ElisiumTheme(appearance = settings.appearance, reduceMotion = settings.reduceMotion) {
                 val state by app.engine.collectAsStateWithLifecycle()
                 ElisiumShell(vm, state)
             }
