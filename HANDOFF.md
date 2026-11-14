@@ -21,7 +21,8 @@ Workflow: OpenCode implements one brief from `briefs/`; Claude audits the diff a
 - ANDROID 5C DONE 2026-11-14: backend, MediaStore output, Room history, DataStore settings, dataSync foreground service, Wi-Fi gate, share intake. Sonnet subagent, cut off before verifying; Claude fixed 4 issues (see briefs/phase5-c-android-backend.result.md). 220 JVM tests, lint clean, debug APK builds. Device behaviour UNVERIFIED.
 - ANDROID 5D DONE 2026-11-14: Compose shell (Downloads/History/Settings), permissions, FileProvider for Open; Sonnet subagent. Claude reran: 273 JVM tests pass, lint 0 errors, APK 73.9 MB. Look, TalkBack, and all behaviour UNVERIFIED on a device (see briefs/phase5-d-android-screens.result.md).
 - DESKTOP 3A DONE 2026-11-14: single instance (QLocalServer, flock-guarded), `elisium add URL|-`, `elisium://add?url=` handler, http/https-only validation, default preset only. Sonnet subagent; Claude reran 446 tests pass, read ipc.py validation. Real browser click / Hyprland / dunst UNVERIFIED.
-- Next: browser extension (3B), then Android 5E after phone test, 5E a11y + signed release; desktop Phase 3 (elisium:// handler, CLI add, browser ext), Phase 4 packaging, Phase 5 Android.
+- SCOPE (owner, 2026-11-14): for the owner and friends only, apps only. No browser extension, no store listings, no large-scale distribution polish.
+- Next: Android phone test of Elisium-debug-0.2.0.apk, then 5E (a11y fixes + signed release APK for friends); desktop: Arch install package (PKGBUILD or simple install script) so friends can install it, 5E a11y + signed release; desktop Phase 3 (elisium:// handler, CLI add, browser ext), Phase 4 packaging, Phase 5 Android.
 
 ## Log
 | Brief | Implemented by | Audit | Notes |
