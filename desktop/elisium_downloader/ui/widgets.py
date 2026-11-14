@@ -6,6 +6,7 @@ No colour literals here: every colour is a token fetched from ``theme.current()`
 from __future__ import annotations
 
 import math
+import time
 from typing import Any
 
 from PySide6.QtCore import (
@@ -120,6 +121,61 @@ def breath() -> Breath:
     if _breath is None:
         _breath = Breath()
     return _breath
+
+
+class EnterAnimation(QVariantAnimation):
+    """ONE shared driver for the card enter animation (fade + 8px rise, 220ms ease-out).
+
+    Cards register by item id; each keeps its own start time, so cards added in
+    quick succession do not restart each other and no card owns a timer. Nothing is
+    registered (every card is simply drawn) when motion is reduced.
+    """
+
+    DURATION_MS = 220
+    RISE_PX = 8.0
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setStartValue(0.0)
+        self.setEndValue(1.0)
+        self.setDuration(self.DURATION_MS + 40)
+        self.setEasingCurve(QEasingCurve.Type.Linear)
+        self._starts: dict[int, float] = {}
+        self.finished.connect(self._starts.clear)
+
+    def add(self, item_id: int) -> bool:
+        """Start the enter animation for a new card; False when motion is off."""
+        if _motion_off():
+            return False
+        self._starts[item_id] = time.monotonic()
+        if self.state() != QVariantAnimation.State.Running:
+            self.start()
+        return True
+
+    @property
+    def active(self) -> bool:
+        return bool(self._starts)
+
+    def progress(self, item_id: int) -> float:
+        """0..1 with ease-out; 1.0 for a card that is not entering."""
+        start = self._starts.get(item_id)
+        if start is None or _motion_off():
+            return 1.0
+        t = (time.monotonic() - start) * 1000.0 / self.DURATION_MS
+        if t >= 1.0:
+            self._starts.pop(item_id, None)
+            return 1.0
+        return 1.0 - (1.0 - max(t, 0.0)) ** 3
+
+
+_enter: EnterAnimation | None = None
+
+
+def enter_animation() -> EnterAnimation:
+    global _enter
+    if _enter is None:
+        _enter = EnterAnimation()
+    return _enter
 
 
 # -- glyph and icons -----------------------------------------------------------
@@ -452,6 +508,9 @@ class _CardDelegate(QStyledItemDelegate):
 class QueueDelegate(_CardDelegate):
     """A download as a card: title, state chip, glow progress, speed - size - time left."""
 
+    actions_row_id: int | None = None  # card showing action buttons (set by CardActions)
+    actions_width: float = 0.0
+
     def metrics(self, base: QFont) -> dict[str, float]:
         title_f, cap_f, _chip_f = self.fonts(base)
         tfm, cfm = QFontMetrics(title_f), QFontMetrics(cap_f)
@@ -481,6 +540,10 @@ class QueueDelegate(_CardDelegate):
         tfm, cfm = QFontMetrics(title_f), QFontMetrics(cap_f)
         card = self.card_rect(option.rect, u)
         painter.save()
+        entering = enter_animation().progress(row["id"])
+        if entering < 1.0:
+            painter.setOpacity(entering)
+            painter.translate(0.0, EnterAnimation.RISE_PX * (1.0 - entering))
         self.paint_card(painter, card, option, u)
         inner = card.adjusted(pad, pad, -pad, -pad)
         state = row["state"]
@@ -509,11 +572,14 @@ class QueueDelegate(_CardDelegate):
                          int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter), pct_text)
 
         cap_top = bar_top + bar_h + gap * 0.75
-        parts = visible_parts(caption_parts(row), cfm, int(inner.width()))
+        cap_w = inner.width()
+        if row["id"] == self.actions_row_id:  # leave room for the card's action buttons
+            cap_w = max(40.0, cap_w - self.actions_width - gap)
+        parts = visible_parts(caption_parts(row), cfm, int(cap_w))
         painter.setPen(p.color("error" if state == "failed" else "muted"))
         text = cfm.elidedText("  ·  ".join(t for _k, t in parts), Qt.TextElideMode.ElideRight,
-                              int(inner.width()))
-        painter.drawText(QRectF(inner.left(), cap_top, inner.width(), cfm.height()),
+                              int(cap_w))
+        painter.drawText(QRectF(inner.left(), cap_top, cap_w, cfm.height()),
                          int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft), text)
         painter.restore()
 

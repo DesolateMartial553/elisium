@@ -147,6 +147,13 @@ def test_url_is_last_and_extra_args_before_it(tmp_path: Path) -> None:
     assert argv[-2] == "--no-playlist"
 
 
+def test_downloads_always_pass_no_playlist(tmp_path: Path) -> None:
+    opts = make_options(tmp_path, tmp_path / "yt-dlp")
+    argv = build_command(opts)
+    assert argv.count("--no-playlist") == 1
+    assert argv.index("--no-playlist") < len(argv) - 1  # before the URL
+
+
 def test_options_reject_an_empty_url(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         DownloadOptions(

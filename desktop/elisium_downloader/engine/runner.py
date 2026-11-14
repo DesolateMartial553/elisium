@@ -141,6 +141,10 @@ def build_command(opts: DownloadOptions) -> list[str]:
         str(int(opts.fragment_retries)),
         "-f",
         opts.format_selector,
+        # The queue only ever downloads single videos (playlist picks are queued
+        # one URL each); without this a ``watch?v=ID&list=...`` link would pull
+        # the whole playlist or mix into one item.
+        "--no-playlist",
     ]
     if opts.path_file is not None:
         argv.extend(

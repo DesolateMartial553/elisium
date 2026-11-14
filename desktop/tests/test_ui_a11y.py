@@ -75,10 +75,15 @@ def test_tab_order_through_the_main_window(win) -> None:
     for _ in range(8):
         QTest.keyClick(QApplication.focusWidget(), Qt.Key.Key_Tab)
         seen.append(focus_name())
-    assert seen[:8] == [
-        "Video link", "Paste", "Add", "Options", "Sections", "Downloads", "Pause", "Cancel",
+    assert seen[:9] == [
+        "Video link", "Paste", "Add", "Options", "Sections", "Downloads",
+        "Pause https://a.com/1", "Cancel https://a.com/1",  # the selected card's own buttons
+        "Pause",
     ]
-    assert seen[8] == "Video link"  # wraps round
+    QTest.keyClick(QApplication.focusWidget(), Qt.Key.Key_Tab)
+    assert focus_name() == "Cancel"  # then the unchanged toolbar
+    QTest.keyClick(QApplication.focusWidget(), Qt.Key.Key_Tab)
+    assert focus_name() == "Video link"  # wraps round
 
 
 def test_tab_leaves_the_table_instead_of_walking_cells(win) -> None:

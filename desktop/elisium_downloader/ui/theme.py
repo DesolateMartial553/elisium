@@ -379,6 +379,10 @@ QToolButton {{ background: transparent; color: {c('accent')}; border: 1px solid 
 QToolButton:hover {{ background: {c('raised')}; }}
 QToolButton:disabled {{ color: {c('muted')}; }}
 QToolButton:focus {{ border: 2px solid {c('accent')}; padding: 5px 9px; }}
+QToolButton#cardAction {{ background: {c('surface')}; color: {c('text')}; border: 1px solid {c('outline')};
+    border-radius: {r['small']}px; padding: 0; }}
+QToolButton#cardAction:hover {{ background: {c('outline')}; }}
+QToolButton#cardAction:focus {{ border: 2px solid {c('accent')}; padding: 0; }}
 QToolBar {{ background: transparent; border: none; spacing: 8px; padding: 4px 0; }}
 QToolBar QToolButton {{ background: {c('raised')}; color: {c('text')}; border: 1px solid {c('outline')};
     border-radius: {r['small']}px; padding: 0 14px; min-height: 40px; }}

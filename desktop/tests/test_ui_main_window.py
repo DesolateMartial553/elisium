@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QUrl
+from PySide6.QtCore import QCoreApplication, QUrl, Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QMessageBox
 
@@ -281,3 +281,112 @@ def test_narrow_cards_drop_low_priority_info_first(window) -> None:
     # the table keeps one visible column (the card); the rest stay in the model
     assert not window.table.isColumnHidden(0)
     assert window.table.isColumnHidden(1)
+
+
+# -- card action buttons and enter animation --------------------------------
+from PySide6.QtWidgets import QApplication  # noqa: E402
+
+from elisium_downloader.ui import theme  # noqa: E402
+from elisium_downloader.ui.main_window import card_action_kinds  # noqa: E402
+from elisium_downloader.ui.widgets import enter_animation  # noqa: E402
+
+
+@pytest.mark.parametrize("state,kinds", [
+    ("queued", ["pause", "cancel"]),
+    ("probing", ["pause", "cancel"]),
+    ("downloading", ["pause", "cancel"]),
+    ("merging", ["pause", "cancel"]),
+    ("paused", ["resume", "cancel"]),
+    ("failed", ["retry"]),
+    ("cancelled", ["retry"]),
+    ("done", ["open"]),
+    ("skipped", []),
+])
+def test_card_action_kinds_per_state(state, kinds, window) -> None:
+    assert card_action_kinds(state) == kinds
+    window.model.load([make_snapshot(1, state, title="T")])
+    window.table.selectRow(0)
+    pump()
+    assert window.card_actions.visible_kinds() == kinds
+    # they agree with the toolbar's enabled state
+    enabled = [k for k, a in (("pause", window.pause_action), ("resume", window.resume_action),
+                              ("retry", window.retry_action), ("cancel", window.cancel_action),
+                              ("open", window.open_action)) if a.isEnabled()]
+    assert window.card_actions.visible_kinds() == enabled
+
+
+def test_card_buttons_have_accessible_names_with_the_title(window) -> None:
+    window.model.load([make_snapshot(1, "downloading", title="Big Buck Bunny")])
+    window.table.selectRow(0)
+    pump()
+    buttons = window.card_actions.buttons
+    assert buttons["pause"].accessibleName() == "Pause Big Buck Bunny"
+    assert buttons["cancel"].accessibleName() == "Cancel Big Buck Bunny"
+    assert buttons["pause"].focusPolicy() & Qt.FocusPolicy.TabFocus
+    assert not buttons["pause"].icon().isNull()
+    assert buttons["pause"].accessibleDescription()
+
+
+def test_card_button_runs_the_window_action_on_its_own_card(window, ui_queue) -> None:
+    window.resize(900, 700)
+    window.show()
+    window.add_text("https://a.com/1 https://b.com/2")
+    pump()
+    window.table.selectRow(0)
+    pump()
+    calls = []
+    window.queue.cancel = lambda item_id: calls.append(item_id)  # type: ignore[method-assign]
+    window.card_actions._hover_row = 1  # pointer over the second card
+    window.card_actions.refresh()
+    assert window.card_actions.card_row() == 1
+    window.card_actions.buttons["cancel"].click()
+    assert calls == [window.model.item_id_at(1)]
+    assert window.table.selectionModel().selectedRows()[0].row() == 1
+
+
+def test_card_buttons_hidden_without_a_card(window) -> None:
+    window.model.load([])
+    pump()
+    assert window.card_actions.visible_kinds() == []
+    assert window.delegate.actions_row_id is None
+
+
+def test_card_enter_animation_runs_once_for_new_cards_only(window, monkeypatch) -> None:
+    monkeypatch.setenv("ELISIUM_REDUCE_MOTION", "0")
+    anim = enter_animation()
+    anim._starts.clear()
+    window.model.load([make_snapshot(1, "queued", title="Old")])  # a reload: no animation
+    assert not anim.active
+    window.model.upsert(make_snapshot(2, "queued", title="New"))
+    assert anim.active and anim.state() == anim.State.Running
+    assert 0.0 <= anim.progress(2) < 1.0 and anim.progress(1) == 1.0
+    anim._starts[2] -= 1.0  # 220ms are long gone
+    assert anim.progress(2) == 1.0 and not anim.active
+    anim.stop()
+
+
+def test_card_enter_animation_is_off_with_reduced_motion(window, monkeypatch) -> None:
+    monkeypatch.setenv("ELISIUM_REDUCE_MOTION", "1")
+    anim = enter_animation()
+    anim._starts.clear()
+    window.model.upsert(make_snapshot(3, "queued", title="New"))
+    assert not anim.active and anim.progress(3) == 1.0
+
+
+def test_card_enter_animation_off_with_the_settings_switch(window, monkeypatch) -> None:
+    monkeypatch.delenv("ELISIUM_REDUCE_MOTION", raising=False)
+    theme.set_reduce_motion(True)
+    try:
+        anim = enter_animation()
+        anim._starts.clear()
+        window.model.upsert(make_snapshot(4, "queued", title="New"))
+        assert not anim.active
+    finally:
+        theme.set_reduce_motion(False)
+
+
+def test_toolbar_and_shortcuts_still_work_with_card_buttons(window) -> None:
+    window.model.load([make_snapshot(1, "paused", title="T")])
+    window.table.selectRow(0)
+    pump()
+    assert window.resume_action.isEnabled() and not window.pause_action.isEnabled()

@@ -750,7 +750,8 @@ def test_readding_a_done_item_after_deleting_its_file_downloads_again(harness) -
     assert again["error"] is None
     assert again["file_path"] is None
     assert not h.archive.has("youtube", VIDEO_ID)
-    assert h.row(first)["state"] == "queued"
+    # the worker may already have picked it up, so "queued" is not stable; it must not still be "done"
+    assert h.row(first)["state"] in ("queued", "probing", "downloading")
 
     assert h.queue.wait_until_idle(15)
     final = h.queue.item(first["id"])

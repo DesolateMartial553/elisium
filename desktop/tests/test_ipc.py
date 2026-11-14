@@ -375,3 +375,36 @@ def test_send_add_leaves_room_for_the_gui_application(tmp_path) -> None:
                          env={**os.environ, "PYTHONPATH": root, "QT_QPA_PLATFORM": "offscreen",
                               "XDG_RUNTIME_DIR": str(tmp_path)}, timeout=30)
     assert out.stdout.strip() == "QApplication", out.stderr
+
+
+def _open_connections(server, count: int = 3) -> list[QLocalSocket]:
+    clients = []
+    for _ in range(count):
+        sock = QLocalSocket()
+        sock.connectToServer(str(server.path))
+        assert sock.waitForConnected(1000)
+        clients.append(sock)
+    assert pump_until(lambda: len(server.findChildren(ipc._Session)) == count)
+    return clients
+
+
+@pytest.mark.parametrize("close_first", [True, False])
+def test_server_teardown_with_open_connections_does_not_crash_later(runtime, close_first) -> None:
+    """Regression: dropping the server while clients were still connected made each
+    session call ``deleteLater`` from inside its own destruction; the dangling event
+    segfaulted a later ``processEvents`` (seen as a rare crash in the full suite)."""
+    import gc
+
+    srv = ipc.acquire_server(read_timeout_ms=5000, path=runtime / "t.sock")
+    assert srv is not None
+    clients = _open_connections(srv)
+    if close_first:
+        srv.close()
+    del srv
+    gc.collect()
+    for _ in range(20):  # the old bug crashed here
+        QCoreApplication.processEvents()
+        time.sleep(0.005)
+    for sock in clients:
+        sock.abort()
+    QCoreApplication.processEvents()

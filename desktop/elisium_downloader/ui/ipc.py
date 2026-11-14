@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
+import shiboken6
 from PySide6.QtCore import QCoreApplication, QObject, QTimer
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
@@ -183,18 +184,34 @@ class _Session(QObject):
         self._handler = handler
         self._buffer = bytearray()
         self._done = False
+        # While this object is being destroyed Qt still lets its child socket emit
+        # ``disconnected``; ``deleteLater`` from that slot would post an event for an
+        # object that is already gone (Qt removes posted events *before* it deletes the
+        # children), and the next event-loop pass would crash. ``destroyed`` fires first,
+        # so it flips a flag the slots check. (A plain list: no reference to ``self``.)
+        self._dying = dying = [False]
+        self.destroyed.connect(lambda *_: dying.__setitem__(0, True))
         sock.setParent(self)
         sock.readyRead.connect(self._on_ready)
         sock.disconnected.connect(self._on_disconnected)
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
-        self._timer.timeout.connect(lambda: self._finish(_error("timeout")))
+        self._timer.timeout.connect(self._on_timeout)
         self._timer.start(timeout_ms)
         if sock.bytesAvailable():
             self._on_ready()
 
+    def dispose(self) -> None:
+        """Drop the connection without answering (server shutdown)."""
+        self._dying[0] = True
+        self._done = True
+        self._timer.stop()
+        self._sock.disconnected.disconnect(self._on_disconnected)
+        self._sock.readyRead.disconnect(self._on_ready)
+        self._sock.abort()
+
     def _on_ready(self) -> None:
-        if self._done:
+        if self._done or self._dying[0]:
             return
         # Never buffer more than the limit (+1 byte to detect overflow).
         room = MAX_MESSAGE_BYTES + 1 - len(self._buffer)
@@ -206,14 +223,19 @@ class _Session(QObject):
             self._finish(handle_message(line, self._handler))
 
     def _on_disconnected(self) -> None:
+        if self._dying[0]:
+            return
         if not self._done:
             self._on_ready()
         if not self._done and self._buffer:
             self._finish(handle_message(bytes(self._buffer), self._handler))
         self.deleteLater()
 
+    def _on_timeout(self) -> None:
+        self._finish(_error("timeout"))
+
     def _finish(self, reply: dict[str, Any]) -> None:
-        if self._done:
+        if self._done or self._dying[0]:
             return
         self._done = True
         self._timer.stop()
@@ -254,6 +276,9 @@ class IpcServer(QObject):
 
     def close(self) -> None:
         self._server.close()  # also removes the socket file
+        for session in self.findChildren(_Session):  # connections still open
+            session.dispose()
+            shiboken6.delete(session)  # now, not via a posted event or the garbage collector
         if self._lock_fd is not None:
             os.close(self._lock_fd)
             self._lock_fd = None

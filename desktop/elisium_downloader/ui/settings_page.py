@@ -152,6 +152,7 @@ class SettingsPage(QWidget):
         form = card("Downloads")
         self.concurrency_spin = QSpinBox()
         self.concurrency_spin.setRange(1, MAX_CONCURRENCY)
+        self._pad_spin(self.concurrency_spin)
         self._describe(self.concurrency_spin, "Parallel downloads",
                        "How many downloads run at the same time, from 1 to 5.")
         form.addRow(self._label("Parallel downloads", self.concurrency_spin), self.concurrency_spin)
@@ -160,6 +161,7 @@ class SettingsPage(QWidget):
         self._describe(self.limit_check, "Limit speed",
                        "Turn on to cap the download speed.")
         self.limit_spin = QDoubleSpinBox()
+        self._pad_spin(self.limit_spin)
         self.limit_spin.setRange(0.1, 100000)
         self.limit_spin.setDecimals(1)
         self.limit_spin.setValue(2)
@@ -263,6 +265,12 @@ class SettingsPage(QWidget):
         self.setTabOrder(self.open_folder_button, self.open_data_button)
 
     @staticmethod
+    def _pad_spin(spin: QSpinBox | QDoubleSpinBox) -> None:
+        """Style sheet padding does not reach a spin box's text; indent it so the
+        number does not sit against the field's left edge."""
+        spin.lineEdit().setTextMargins(10, 0, 0, 0)
+
+    @staticmethod
     def _describe(widget: QWidget, name: str, description: str) -> None:
         widget.setAccessibleName(name)
         widget.setAccessibleDescription(description)
@@ -278,6 +286,8 @@ class SettingsPage(QWidget):
         fm = self.fontMetrics()
         for spin, sample in ((self.concurrency_spin, "00"), (self.limit_spin, "00000.0")):
             spin.setMinimumWidth(fm.horizontalAdvance(sample) + 120)
+            # The style sheet's fixed min-height must not squeeze the number field at big text.
+            spin.setMinimumHeight(max(42, spin.lineEdit().minimumSizeHint().height() + 8))
         # A path label this wide makes the form wrap it under its caption when short of room.
         self.folder_label.setMinimumWidth(fm.horizontalAdvance("M") * 16)
 

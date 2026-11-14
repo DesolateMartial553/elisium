@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 import time
 
-from PySide6.QtCore import QEvent, QPoint, QTimer, QUrl, Qt
+from PySide6.QtCore import QEvent, QObject, QPoint, QSize, QTimer, QUrl, Qt
 from PySide6.QtGui import (
     QAccessible,
     QAccessibleAnnouncementEvent,
@@ -44,6 +44,7 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QTableView,
     QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -61,7 +62,10 @@ from .settings_page import SettingsPage
 from .tray import TrayController, tray_wanted
 from .model import COLUMNS, DownloadModel
 from .quality_dialog import dialog_scale, font_scale
-from .widgets import EmptyState, HorizonHeader, QueueDelegate, RowHeightKeeper, action_icon, breath
+from .widgets import (
+    EmptyState, HorizonHeader, QueueDelegate, RowHeightKeeper, action_icon, breath,
+    enter_animation,
+)
 
 __all__ = ["MainWindow", "ProgressAnnouncer", "SHORTCUTS", "extract_urls"]
 
@@ -233,6 +237,168 @@ class ProgressAnnouncer:
         if reached > self._step.get(item_id, 0):
             self._step[item_id] = reached
             self._say(f"{self._name(item)}: {PROGRESS_STEPS[reached - 1]} percent")
+
+
+def card_action_kinds(state: str | None) -> list[str]:
+    """The card buttons that make sense in *state*, in display order.
+
+    Same rules as the toolbar actions (``pause``/``resume``/``retry``/``cancel``/``open``).
+    """
+    kinds: list[str] = []
+    if state in PAUSABLE:
+        kinds.append("pause")
+    if state == "paused":
+        kinds.append("resume")
+    if state in RETRYABLE:
+        kinds.append("retry")
+    if state in CANCELLABLE:
+        kinds.append("cancel")
+    if state == "done":
+        kinds.append("open")
+    return kinds
+
+
+class CardActions(QObject):
+    """Action buttons on the hovered (else the selected) download card.
+
+    ONE set of buttons lives on the table viewport and is moved to the right card;
+    a click selects that card and triggers the window's own action, so the toolbar,
+    the menu and the shortcuts stay the single source of behaviour. Buttons are in the
+    Tab order right after the list and are named "<Action> <title>".
+    """
+
+    KINDS = ("pause", "resume", "retry", "cancel", "open")
+
+    def __init__(self, window: MainWindow) -> None:
+        super().__init__(window)
+        self._w = window
+        self._table = window.table
+        self._hover_row = -1
+        self._row = -1
+        self._actions = {
+            "pause": window.pause_action, "resume": window.resume_action,
+            "retry": window.retry_action, "cancel": window.cancel_action,
+            "open": window.open_action,
+        }
+        self.buttons: dict[str, QToolButton] = {}
+        viewport = self._table.viewport()
+        for kind in self.KINDS:
+            button = QToolButton(viewport)
+            button.setObjectName("cardAction")
+            button.setAutoRaise(False)
+            button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+            button.setToolTip(self._actions[kind].text())
+            button.setAccessibleDescription(self._actions[kind].toolTip())
+            button.clicked.connect(lambda _=False, k=kind: self.activate(k))
+            button.hide()
+            self.buttons[kind] = button
+        viewport.setMouseTracking(True)
+        viewport.installEventFilter(self)
+        model = self._table.model()
+        for signal in (model.rowsInserted, model.rowsRemoved, model.modelReset,
+                       model.dataChanged, model.layoutChanged):
+            signal.connect(self.refresh)
+        self._table.selectionModel().selectionChanged.connect(self.refresh)
+        self._table.verticalScrollBar().valueChanged.connect(self.refresh)
+
+    # -- what is shown ---------------------------------------------------
+    def card_row(self) -> int:
+        """Row that currently carries the buttons (-1 for none)."""
+        return self._row
+
+    def visible_kinds(self) -> list[str]:
+        return [k for k in self.KINDS if not self.buttons[k].isHidden()]
+
+    def _target_row(self) -> int:
+        if any(b.hasFocus() for b in self.buttons.values()):
+            return self._row  # keyboard use: stay on the card being operated
+        if self._hover_row >= 0:
+            return self._hover_row
+        rows = self._table.selectionModel().selectedRows()
+        return rows[0].row() if rows else -1
+
+    def refresh(self, *_: object) -> None:
+        had_focus = next((k for k, b in self.buttons.items() if b.hasFocus()), None)
+        row = self._target_row()
+        snap = self._w.model.snapshot_at(row) if row >= 0 else None
+        delegate = self._w.delegate
+        rect = self._table.visualRect(self._w.model.index(row, 0)) if snap else None
+        if snap is None or rect is None or not rect.isValid() or not self._table.viewport().rect().intersects(rect):
+            self._row = -1
+            for b in self.buttons.values():
+                b.hide()
+            delegate.actions_row_id, delegate.actions_width = None, 0.0
+            self._table.viewport().update()
+            self._restore_focus(had_focus)
+            return
+        self._row = row
+        kinds = card_action_kinds(snap["state"])
+        title = DownloadModel.title_of(snap)
+        m = delegate.metrics(self._table.font())
+        u, pad = m["u"], m["pad"]
+        cap_h = QFontMetrics(delegate.fonts(self._table.font())[1]).height()
+        side = int(round(cap_h + 10 * u))
+        spacing = int(round(4 * u))
+        card = delegate.card_rect(rect, u)
+        right = card.right() - pad
+        centre = card.bottom() - pad - cap_h / 2
+        total = len(kinds) * side + max(len(kinds) - 1, 0) * spacing
+        x = int(round(right)) - total
+        for kind in self.KINDS:
+            button = self.buttons[kind]
+            if kind not in kinds:
+                button.hide()
+                continue
+            action = self._actions[kind]
+            button.setFixedSize(side, side)
+            button.setIconSize(QSize(int(side * 0.6), int(side * 0.6)))
+            button.setIcon(action.icon())
+            button.setToolTip(f"{action.text()}: {title}")
+            button.setAccessibleName(f"{action.text()} {title}")
+            button.move(x, int(round(centre - side / 2)))
+            button.show()
+            button.raise_()
+            x += side + spacing
+        delegate.actions_row_id, delegate.actions_width = snap["id"], float(total)
+        self._table.viewport().update()
+        self._restore_focus(had_focus)
+
+    def _restore_focus(self, kind: str | None) -> None:
+        """A focused button that vanished (Pause -> Resume) hands focus to a sibling."""
+        if kind is None or self.buttons[kind].isVisible() or any(
+                b.hasFocus() for b in self.buttons.values()):
+            return
+        shown = [b for b in self.buttons.values() if not b.isHidden()]
+        (shown[0] if shown else self._table).setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def refresh_icons(self) -> None:
+        self.refresh()
+
+    # -- doing -----------------------------------------------------------
+    def activate(self, kind: str) -> None:
+        """Select the card the buttons are on, then run the window's own action."""
+        if self._row < 0:
+            return
+        if [r.row() for r in self._table.selectionModel().selectedRows()] != [self._row]:
+            self._table.selectRow(self._row)
+        self._actions[kind].trigger()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
+        kind = event.type()
+        if kind == QEvent.Type.MouseMove:
+            index = self._table.indexAt(event.position().toPoint())
+            row = index.row() if index.isValid() else -1
+            if row != self._hover_row:
+                self._hover_row = row
+                self.refresh()
+        elif kind in (QEvent.Type.Leave, QEvent.Type.Hide):
+            if self._hover_row != -1:
+                self._hover_row = -1
+                self.refresh()
+        elif kind == QEvent.Type.Resize:
+            QTimer.singleShot(0, self.refresh)
+        return False
 
 
 class MainWindow(QMainWindow):
@@ -462,10 +628,23 @@ class MainWindow(QMainWindow):
             button.setAccessibleDescription(action.toolTip())
             button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         self._downloads_layout.insertWidget(1, self.toolbar)
+        self.card_actions = CardActions(self)
         self._apply_icons()
         theme.notifier().changed.connect(self._on_theme_changed)
         breath().valueChanged.connect(self._breathe)
+        # One shared animation drives every new card's enter (fade + rise).
+        self.model.rowsInserted.connect(self._on_rows_inserted)
+        enter_animation().valueChanged.connect(self._on_enter_tick)
         self._last_repaint = 0.0
+
+    def _on_enter_tick(self, *_: object) -> None:
+        self.table.viewport().update()
+
+    def _on_rows_inserted(self, _parent: Any, first: int, last: int) -> None:
+        for row in range(first, last + 1):
+            item_id = self.model.item_id_at(row)
+            if item_id is not None:
+                enter_animation().add(item_id)
 
     def _apply_icons(self) -> None:
         for action, kind in (
@@ -474,6 +653,8 @@ class MainWindow(QMainWindow):
             (self.open_action, "folder"),
         ):
             action.setIcon(action_icon(kind))
+        if hasattr(self, "card_actions"):
+            self.card_actions.refresh_icons()
 
     def _on_theme_changed(self) -> None:
         self._apply_icons()
@@ -527,6 +708,7 @@ class MainWindow(QMainWindow):
             self.url_edit, self.paste_button, self.add_button, self.options_button,
             self.sidebar, self.table,
         ]
+        widgets.extend(self.card_actions.buttons[k] for k in CardActions.KINDS)
         for action in (
             self.pause_action, self.resume_action, self.retry_action,
             self.cancel_action, self.open_action,
@@ -913,6 +1095,13 @@ class MainWindow(QMainWindow):
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
         dialog.adjustSize()  # honours wrapped labels' height-for-width
+        # Pin each wrapped label to the height its text needs at the final width, so a
+        # later re-layout (different font engine, text size change) cannot clip a line.
+        margins = layout.contentsMargins()
+        width = dialog.width() - margins.left() - margins.right()
+        for label in dialog.findChildren(QLabel):
+            label.setMinimumHeight(label.heightForWidth(width))
+        dialog.adjustSize()
         return dialog
 
     def show_shortcuts(self) -> None:
