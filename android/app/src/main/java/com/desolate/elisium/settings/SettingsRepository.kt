@@ -14,38 +14,54 @@ import kotlinx.coroutines.flow.map
 
 private val Context.settingsStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
+/** What the settings screen needs; [SettingsRepository] is the real one, tests use a fake. */
+interface SettingsStore {
+    val settings: Flow<Settings>
+    suspend fun setConcurrency(value: Int): Boolean
+    suspend fun setSpeedLimit(value: String?): Boolean
+    suspend fun setPresetId(id: String)
+    suspend fun setWifiOnly(value: Boolean)
+    suspend fun setNotifyOnDone(value: Boolean)
+}
+
 /**
  * Settings in a Preferences DataStore. Whatever is stored is validated on every read
  * ([validated]), so a hand-edited or old value falls back to its default. Compile-verified
  * only; the validation rules are JVM-tested in `SettingsRulesTest`.
  */
-class SettingsRepository(context: Context) {
+class SettingsRepository(context: Context) : SettingsStore {
     private val store = context.applicationContext.settingsStore
 
-    val settings: Flow<Settings> = store.data.map { it.toSettings() }
+    override val settings: Flow<Settings> = store.data.map { it.toSettings() }
 
     suspend fun current(): Settings = settings.first()
 
     /** Stores [value] and returns true, or returns false (nothing stored) when it is outside 1-5. */
-    suspend fun setConcurrency(value: Int): Boolean {
+    override suspend fun setConcurrency(value: Int): Boolean {
         if (!isValidConcurrency(value)) return false
         store.edit { it[CONCURRENCY] = value }
         return true
     }
 
     /** Stores a valid limit (`2M`) or clears it for null/blank; returns false for an invalid string. */
-    suspend fun setSpeedLimit(value: String?): Boolean {
+    override suspend fun setSpeedLimit(value: String?): Boolean {
         val blank = value == null || value.isBlank()
         val valid = if (blank) null else validSpeedLimit(value) ?: return false
         store.edit { if (valid == null) it.remove(SPEED_LIMIT) else it[SPEED_LIMIT] = valid }
         return true
     }
 
-    suspend fun setPresetId(id: String) = store.edit { it[PRESET] = validPresetId(id) }
+    override suspend fun setPresetId(id: String) {
+        store.edit { it[PRESET] = validPresetId(id) }
+    }
 
-    suspend fun setWifiOnly(value: Boolean) = store.edit { it[WIFI_ONLY] = value }
+    override suspend fun setWifiOnly(value: Boolean) {
+        store.edit { it[WIFI_ONLY] = value }
+    }
 
-    suspend fun setNotifyOnDone(value: Boolean) = store.edit { it[NOTIFY] = value }
+    override suspend fun setNotifyOnDone(value: Boolean) {
+        store.edit { it[NOTIFY] = value }
+    }
 
     private fun Preferences.toSettings() = Settings(
         concurrency = this[CONCURRENCY] ?: Settings().concurrency,

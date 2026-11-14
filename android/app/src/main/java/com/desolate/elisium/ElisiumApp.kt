@@ -7,6 +7,8 @@ import com.desolate.elisium.data.AppDatabase
 import com.desolate.elisium.data.RoomHistoryStore
 import com.desolate.elisium.engine.Archive
 import com.desolate.elisium.engine.DownloadQueue
+import com.desolate.elisium.engine.HistoryStore
+import com.desolate.elisium.engine.OutputStore
 import com.desolate.elisium.service.DownloadCoordinator
 import com.desolate.elisium.service.shareConfirmation
 import com.desolate.elisium.settings.SettingsRepository
@@ -63,16 +65,24 @@ class ElisiumApp : Application() {
         }
     }
 
+    /** History over Room; usable before the engine is ready (it only needs the database). */
+    val history: HistoryStore by lazy { RoomHistoryStore(AppDatabase.get(this).history()) }
+
+    /** Where finished files live; the History screen asks it whether a file still exists. */
+    val outputStore: OutputStore by lazy { MediaStoreOutputStore(this) }
+
+    val settingsRepository: SettingsRepository by lazy { SettingsRepository(this) }
+
     private fun createCoordinator(): DownloadCoordinator {
         val queue = DownloadQueue(
-            history = RoomHistoryStore(AppDatabase.get(this).history()),
+            history = history,
             archive = Archive(File(filesDir, "archive.txt")),
-            outputStore = MediaStoreOutputStore(this),
+            outputStore = outputStore,
             backend = YoutubeDlBackend(LibraryYtDlpRunner()),
             stagingDir = File(filesDir, "staging"),
             scope = scope,
         )
-        val coordinator = DownloadCoordinator(this, queue, SettingsRepository(this), scope)
+        val coordinator = DownloadCoordinator(this, queue, settingsRepository, scope)
         coordinator.start()
         return coordinator
     }
