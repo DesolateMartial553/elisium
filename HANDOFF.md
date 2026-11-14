@@ -18,7 +18,8 @@ Workflow: OpenCode implements one brief from `briefs/`; Claude audits the diff a
 - RENAMED 2026-11-13 (user): app is now "Elisium" (no "Downloader"): window title, command `elisium`, app_id `elisium`, data ~/.local/share/elisium, cache ~/.cache/elisium, output ~/Downloads/Elisium. Python package stays elisium_downloader, repo folder stays elisium-downloader. Launcher (user space): ~/.local/bin/elisium (dev wrapper), ~/.local/share/applications/elisium.desktop, icon elisium.svg; copies in desktop/packaging/.
 - ANDROID 5A DONE 2026-11-13: android/ scaffold builds debug APK (72 MB, arm64-v8a only, package com.desolate.elisium, AGP 9.5.1, Kotlin 2.4.21, compileSdk 37, youtubedl-android 0.18.1). Build: JAVA_HOME=/usr/lib/jvm/java-21-openjdk nice gradle --no-daemon --max-workers=1 :app:assembleDebug (first build OOM-killed once; retry works). UNVERIFIED on a device: engine start. Copy at ~/Downloads/Elisium-debug-0.1.0.apk. TODO: allowBackup=false before release (cookies).
 - ANDROID 5B DONE: Kotlin engine port (UrlNorm, Errors, Presets, Formats, Archive, ProgressParser, DownloadQueue + Ports interfaces) 121 JVM tests pass (audited: rerun by Claude). Sonnet subagent. Deviations accepted: queue calls OutputStore.publish (publish_failed error), existsAt added, skipped carries "Already downloaded.".
-- Next: Android 5C (YoutubeDlBackend, MediaStore OutputStore, Room history, foreground service), 5D screens, 5E a11y + signed release; desktop Phase 3 (elisium:// handler, CLI add, browser ext), Phase 4 packaging, Phase 5 Android.
+- ANDROID 5C DONE 2026-11-14: backend, MediaStore output, Room history, DataStore settings, dataSync foreground service, Wi-Fi gate, share intake. Sonnet subagent, cut off before verifying; Claude fixed 4 issues (see briefs/phase5-c-android-backend.result.md). 220 JVM tests, lint clean, debug APK builds. Device behaviour UNVERIFIED.
+- Next: Android 5D screens, 5E a11y + signed release; desktop Phase 3 (elisium:// handler, CLI add, browser ext), Phase 4 packaging, Phase 5 Android.
 
 ## Log
 | Brief | Implemented by | Audit | Notes |
@@ -30,6 +31,7 @@ Workflow: OpenCode implements one brief from `briefs/`; Claude audits the diff a
 | 2B | OpenCode (presets.py only, then limit) + Sonnet subagent | Claude: pass | 252 tests; screenshots reviewed |
 | 2C | Sonnet subagent | Claude: pass | 321 tests; screenshots reviewed |
 | 2D | Sonnet subagent | Claude: pass | 391 tests; Orca/tray/dunst untested |
+| 5C | Sonnet subagent (cut off) | Claude: pass after 4 fixes | 220 JVM tests, lint clean, APK builds; device untested |
 |---|---|---|---|
 
 ## Owner actions pending

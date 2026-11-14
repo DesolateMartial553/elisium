@@ -1,6 +1,19 @@
 package com.desolate.elisium
 
 import android.app.Application
+import com.desolate.elisium.backend.LibraryYtDlpRunner
+import com.desolate.elisium.backend.YoutubeDlBackend
+import com.desolate.elisium.data.AppDatabase
+import com.desolate.elisium.data.RoomHistoryStore
+import com.desolate.elisium.engine.Archive
+import com.desolate.elisium.engine.DownloadQueue
+import com.desolate.elisium.service.DownloadCoordinator
+import com.desolate.elisium.service.shareConfirmation
+import com.desolate.elisium.settings.SettingsRepository
+import com.desolate.elisium.storage.MediaStoreOutputStore
+import java.io.File
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import com.yausername.aria2c.Aria2c
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
@@ -21,9 +34,18 @@ sealed interface EngineState {
 
 class ElisiumApp : Application() {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /** Application-wide IO scope: the queue's workers, the coordinator and share intake run here. */
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _engine = MutableStateFlow<EngineState>(EngineState.Starting)
     val engine: StateFlow<EngineState> = _engine.asStateFlow()
+
+    private val _coordinator = MutableStateFlow<DownloadCoordinator?>(null)
+
+    /** The queue wiring; null until the engine is ready (and forever if it failed). */
+    val coordinator: StateFlow<DownloadCoordinator?> = _coordinator.asStateFlow()
+
+    /** The application-scoped download queue, or null while the engine is not ready. */
+    val queue: DownloadQueue? get() = _coordinator.value?.queue
 
     override fun onCreate() {
         super.onCreate()
@@ -33,10 +55,48 @@ class ElisiumApp : Application() {
                 FFmpeg.getInstance().init(this@ElisiumApp)
                 Aria2c.getInstance().init(this@ElisiumApp)
                 val version = YoutubeDL.version(this@ElisiumApp) ?: "unknown"
+                _coordinator.value = createCoordinator()
                 EngineState.Ready(version)
             } catch (e: Exception) {
                 EngineState.Failed(e.message ?: e.javaClass.simpleName)
             }
         }
+    }
+
+    private fun createCoordinator(): DownloadCoordinator {
+        val queue = DownloadQueue(
+            history = RoomHistoryStore(AppDatabase.get(this).history()),
+            archive = Archive(File(filesDir, "archive.txt")),
+            outputStore = MediaStoreOutputStore(this),
+            backend = YoutubeDlBackend(LibraryYtDlpRunner()),
+            stagingDir = File(filesDir, "staging"),
+            scope = scope,
+        )
+        val coordinator = DownloadCoordinator(this, queue, SettingsRepository(this), scope)
+        coordinator.start()
+        return coordinator
+    }
+
+    /**
+     * Waits for the engine, then queues every link of [urls] with the default preset.
+     * Returns the confirmation line for the screen. Call off the main thread (history is a database).
+     */
+    suspend fun addLinks(urls: List<String>): String {
+        if (urls.isEmpty()) return shareConfirmation(0, 0, 0)
+        engine.first { it !is EngineState.Starting }
+        if (engine.value is EngineState.Failed) return "Could not add links: the engine failed to start"
+        val queue = _coordinator.filterNotNull().first().queue
+        val known = queue.items.value.mapTo(HashSet()) { it.id }
+        var added = 0
+        var already = 0
+        for (url in urls) {
+            try {
+                val item = queue.add(url)
+                if (known.add(item.id)) added++ else already++
+            } catch (_: IllegalArgumentException) {
+                // not a link the engine can normalise: skipped
+            }
+        }
+        return shareConfirmation(added, already, urls.size)
     }
 }
