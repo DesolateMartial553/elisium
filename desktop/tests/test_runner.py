@@ -473,3 +473,89 @@ def test_real_conversion_postprocessors_stay_converting() -> None:
         "FixupM4a",
     ):
         assert stage_for_postprocessor(name) == "converting"
+
+
+# -- brief 8A: cookies and Instagram story trays -------------------------
+def test_no_cookie_flags_by_default(tmp_path: Path) -> None:
+    argv = build_command(make_options(tmp_path, tmp_path / "yt-dlp"))
+    assert "--cookies-from-browser" not in argv
+    assert "--cookies" not in argv
+
+
+def test_cookie_flags_for_a_browser(tmp_path: Path) -> None:
+    opts = make_options(
+        tmp_path, tmp_path / "yt-dlp", cookies_browser="firefox",
+        cookies_file="/tmp/cookies.txt",
+    )
+    argv = build_command(opts)
+    at = argv.index("--cookies-from-browser")
+    assert argv[at + 1] == "firefox"
+    assert "--cookies" not in argv  # the browser wins when both are set
+    assert argv[-1] == opts.url
+
+
+def test_cookie_flags_for_a_file(tmp_path: Path) -> None:
+    opts = make_options(
+        tmp_path, tmp_path / "yt-dlp", cookies_file="~/cookies.txt"
+    )
+    argv = build_command(opts)
+    at = argv.index("--cookies")
+    assert argv[at + 1] == str(Path("~/cookies.txt").expanduser())
+    assert "--cookies-from-browser" not in argv
+
+
+def test_instagram_story_trays_are_playlists() -> None:
+    from elisium_downloader.engine.runner import _looks_like_playlist
+
+    for url in (
+        "https://www.instagram.com/stories/tiktok/",
+        "https://instagram.com/stories/highlights/17912345678901234/",
+    ):
+        assert _looks_like_playlist(url) is True, url
+
+
+def test_single_story_and_tiktok_video_are_not_playlists() -> None:
+    from elisium_downloader.engine.runner import _looks_like_playlist
+
+    for url in (
+        "https://www.instagram.com/stories/tiktok/3211234567890123456/",
+        "https://www.instagram.com/reel/CabcdEFghij/",
+        "https://www.tiktok.com/@tiktok/video/7106594312292453675",
+    ):
+        assert _looks_like_playlist(url) is False, url
+
+
+def test_probe_passes_the_cookie_choice(tmp_path: Path) -> None:
+    log = tmp_path / "argv.log"
+    fake = write_fake(tmp_path, log=log, probe_info={"id": "1", "title": "t"})
+    probe(
+        "https://www.instagram.com/stories/tiktok/",
+        str(fake),
+        cookies_browser="chrome",
+    )
+    filter_urls = probe(
+        "https://www.instagram.com/stories/tiktok/",
+        str(fake),
+        cookies_file="~/cookies.txt",
+    )
+    assert filter_urls["title"] == "t"
+
+    first, second = read_log(log)
+    assert "--flat-playlist" in first and "--no-playlist" not in first
+    assert first[first.index("--cookies-from-browser") + 1] == "chrome"
+    assert second[second.index("--cookies") + 1] == str(
+        Path("~/cookies.txt").expanduser()
+    )
+    assert "--cookies-from-browser" not in second
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    not os.environ.get("ELISIUM_LIVE_TESTS"),
+    reason="live yt-dlp probe; set ELISIUM_LIVE_TESTS=1",
+)
+def test_live_tiktok_public_video_probe() -> None:
+    """Public TikTok video, real network and real yt-dlp, no login."""
+    url = "https://www.tiktok.com/@tiktok/video/7106594312292453675"
+    info = probe(url, timeout=120)
+    assert "7106594312292453675" in str(info.get("id", ""))

@@ -11,6 +11,7 @@ import com.desolate.elisium.engine.HistoryStore
 import com.desolate.elisium.engine.OutputStore
 import com.desolate.elisium.service.DownloadCoordinator
 import com.desolate.elisium.service.shareConfirmation
+import com.desolate.elisium.settings.CookieJar
 import com.desolate.elisium.settings.SettingsRepository
 import com.desolate.elisium.storage.MediaStoreOutputStore
 import java.io.File
@@ -97,6 +98,9 @@ class ElisiumApp : Application() {
 
     val settingsRepository: SettingsRepository by lazy { SettingsRepository(this) }
 
+    /** The imported cookies.txt (Settings > Accounts); the queue is given its path before every attempt. */
+    val cookieJar: CookieJar by lazy { CookieJar(this) }
+
     private fun createCoordinator(): DownloadCoordinator {
         val queue = DownloadQueue(
             history = history,
@@ -106,6 +110,7 @@ class ElisiumApp : Application() {
             stagingDir = File(filesDir, "staging"),
             scope = scope,
         )
+        queue.setCookiesFile(cookieJar.file)
         val coordinator = DownloadCoordinator(this, queue, settingsRepository, scope)
         coordinator.start()
         return coordinator

@@ -239,6 +239,96 @@ def test_settings_page_loads_existing_values(qapp, ui_queue, tmp_path) -> None:
     assert ui_queue.concurrency == 3
 
 
+# -- brief 8A: Accounts section -------------------------------------------
+def test_settings_accounts_widgets_and_names(spage) -> None:
+    for widget in (spage.cookies_combo, spage.cookies_file_edit,
+                   spage.cookies_choose_button, spage.cookies_clear_button,
+                   spage.cookies_help):
+        assert widget.accessibleName() and widget.accessibleDescription()
+    assert spage.cookies_combo.itemText(0) == "Not signed in"
+    assert spage.cookies_combo.itemData(0) is None
+    assert [spage.cookies_combo.itemData(i) for i in range(1, spage.cookies_combo.count())] == list(
+        st.COOKIE_BROWSERS
+    )
+    assert spage.cookies_file_edit.isReadOnly()
+    assert "Instagram stories" in spage.cookies_help.text()
+    from PySide6.QtWidgets import QLabel
+    buddies = {lab.text(): lab.buddy() for lab in spage.findChildren(QLabel) if lab.buddy()}
+    assert buddies["Browser"] is spage.cookies_combo
+    assert buddies["cookies.txt file"] is spage.cookies_choose_button
+
+
+def test_settings_accounts_dropdown_saves(spage, ui_queue) -> None:
+    spage.cookies_combo.setCurrentIndex(spage.cookies_combo.findData("firefox"))
+    assert ui_queue._cookies_browser == "firefox"
+    assert json.loads(spage.path_.read_text())["cookies_browser"] == "firefox"
+    spage.cookies_combo.setCurrentIndex(0)
+    assert ui_queue._cookies_browser is None
+    assert json.loads(spage.path_.read_text())["cookies_browser"] is None
+
+
+def test_settings_accounts_file_chooser(spage, ui_queue, monkeypatch, tmp_path) -> None:
+    from elisium_downloader.ui import settings_page as sp
+
+    picked = tmp_path / "cookies.txt"
+    picked.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+    monkeypatch.setattr(
+        sp.QFileDialog, "getOpenFileName", lambda *a, **k: (str(picked), "")
+    )
+    spage.cookies_choose_button.click()
+    assert spage.cookies_file_edit.text() == str(picked)
+    assert ui_queue._cookies_file == str(picked)
+    assert json.loads(spage.path_.read_text())["cookies_file"] == str(picked)
+
+    spage.cookies_clear_button.click()
+    assert spage.cookies_file_edit.text() == ""
+    assert ui_queue._cookies_file is None
+    assert json.loads(spage.path_.read_text())["cookies_file"] is None
+
+
+def test_settings_page_loads_saved_cookie_choice(qapp, ui_queue) -> None:
+    page = SettingsPage(
+        st.Settings(cookies_browser="brave", cookies_file="/tmp/cookies.txt"),
+        ui_queue, None, lambda: None,
+    )
+    assert page.cookies_combo.currentData() == "brave"
+    assert page.cookies_file_edit.text() == "/tmp/cookies.txt"
+
+
+def test_show_accounts_focuses_the_browser_dropdown(spage) -> None:
+    spage.show()
+    QCoreApplication.processEvents()
+    spage.show_accounts()
+    QCoreApplication.processEvents()
+    assert spage.focusWidget() is spage.cookies_combo
+    spage.hide()
+
+
+def test_sign_in_error_leads_to_the_accounts_section(window) -> None:
+    window.show()
+    pump()
+    window._on_event(
+        {
+            "type": "state",
+            "item": {
+                "id": 1,
+                "state": "failed",
+                "error": {
+                    "code": "login_required",
+                    "message": "Instagram needs you signed in.",
+                    "fix": "Choose a browser in Settings > Accounts",
+                },
+            },
+        }
+    )
+    assert "Settings > Accounts" in window.statusBar().currentMessage()
+    window.open_accounts()
+    pump()
+    assert window.stack.currentIndex() == 2
+    assert window.settings_page.focusWidget() is window.settings_page.cookies_combo
+    window.hide()
+
+
 def test_ytdlp_version_label_with_fake(spage, qapp, ui_queue) -> None:
     assert wait_until(lambda: spage.version_label.text() == "2025.01.02")
     missing = SettingsPage(st.Settings(), ui_queue, None, lambda: None)

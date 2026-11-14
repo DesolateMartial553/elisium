@@ -39,10 +39,10 @@ class YoutubeDlBackend(
     private val freeBytes: (File) -> Long = StorageSpace::freeBytes,
 ) : DownloadBackend {
 
-    override suspend fun probe(url: String): ProbeResult = withContext(Dispatchers.IO) {
+    override suspend fun probe(url: String, cookiesFile: File?): ProbeResult = withContext(Dispatchers.IO) {
         val processId = "probe-" + UUID.randomUUID()
         val result = coroutineScope {
-            val job = async(Dispatchers.IO) { runner.run(buildProbeArgs(url), url, processId) { } }
+            val job = async(Dispatchers.IO) { runner.run(buildProbeArgs(url, cookiesFile), url, processId) { } }
             try {
                 job.await()
             } catch (e: CancellationException) {

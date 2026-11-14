@@ -207,8 +207,9 @@ class DownloadQueueTest {
         r.runAll()
         val failed = r.queue.item(item.id)!!
         assertEquals("failed", failed.state)
-        assertEquals("http_403", failed.error!!.code)
-        assertEquals("The site refused the download.", failed.error!!.message)
+        val error = failed.error!!
+        assertEquals("http_403", error.code)
+        assertEquals("The site refused the download.", error.message)
         assertEquals(emptyList<Long>(), r.delays.toList())
         assertEquals(1, r.backend.starts)
         assertEquals("http_403", r.row(item).errorCode)
@@ -851,5 +852,59 @@ class DownloadQueueTest {
         assertEquals(1, r.backend.starts)
         assertEquals("137+140", r.backend.requests.single().formatSelector)
         assertEquals(emptyList<String>(), r.backend.requests.single().extraArgs)
+    }
+
+    // -- cookies ---------------------------------------------------------------------------
+    @Test
+    fun `cookies file reaches the probe and the download`() = runTest {
+        val r = rig()
+        val jar = File(tmp.root, "cookies/cookies.txt").also {
+            it.parentFile?.mkdirs()
+            it.writeText("# Netscape HTTP Cookie File\n")
+        }
+        r.queue.setCookiesFile(jar)
+        r.backend.probeHandler = { json("""{"title": "T"}""") }
+        r.queue.add("https://www.instagram.com/stories/someone/")
+        r.runAll()
+        assertEquals(jar, r.backend.probeCookies.single())
+        assertEquals(jar, r.backend.requests.single().cookiesFile)
+    }
+
+    @Test
+    fun `a missing cookies file is not passed on`() = runTest {
+        val r = rig()
+        r.queue.setCookiesFile(File(tmp.root, "cookies/never-written.txt"))
+        r.queue.add("https://vimeo.com/1")
+        r.runAll()
+        assertNull(r.backend.probeCookies.single())
+        assertNull(r.backend.requests.single().cookiesFile)
+    }
+
+    @Test
+    fun `clearing the cookies file stops passing it`() = runTest {
+        val r = rig()
+        val jar = File(tmp.root, "cookies.txt").also { it.writeText("# Netscape HTTP Cookie File\n") }
+        r.queue.setCookiesFile(jar)
+        r.queue.add("https://vimeo.com/1")
+        r.runAll()
+        r.queue.setCookiesFile(null)
+        r.queue.add("https://vimeo.com/2")
+        r.queue.waitUntilIdle()
+        assertEquals(jar, r.backend.requests[0].cookiesFile)
+        assertNull(r.backend.requests[1].cookiesFile)
+    }
+
+    @Test
+    fun `the cookies path never reaches history`() = runTest {
+        val r = rig()
+        val jar = File(tmp.root, "cookies.txt").also { it.writeText("# Netscape HTTP Cookie File\n") }
+        r.queue.setCookiesFile(jar)
+        val item = r.queue.add("https://vimeo.com/1")
+        r.runAll()
+        val row = r.row(item)
+        assertFalse(row.url.contains("cookies.txt"))
+        assertFalse((row.videoKey ?: "").contains("cookies.txt"))
+        assertFalse((row.title ?: "").contains("cookies.txt"))
+        assertFalse((row.errorMessage ?: "").contains("cookies.txt"))
     }
 }

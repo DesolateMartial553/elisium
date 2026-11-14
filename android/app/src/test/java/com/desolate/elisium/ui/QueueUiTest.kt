@@ -10,6 +10,7 @@ import com.desolate.elisium.ui.downloads.ProgressAnnouncer
 import com.desolate.elisium.ui.downloads.RowAction
 import com.desolate.elisium.ui.downloads.bannerFor
 import com.desolate.elisium.ui.downloads.needsCancelConfirmation
+import com.desolate.elisium.ui.downloads.needsSignIn
 import com.desolate.elisium.ui.downloads.spokenRow
 import com.desolate.elisium.ui.downloads.toRowModel
 import com.desolate.elisium.ui.downloads.validActions
@@ -112,6 +113,21 @@ class QueueUiTest {
         assertEquals(listOf(RowAction.Retry), row.actions)
         // An error left on a running item is not shown.
         assertNull(queueItem(state = "downloading", error = ErrorInfo("x", "y", "z")).toRowModel().errorMessage)
+    }
+
+    @Test fun signInFailuresOfferTheAccountsShortcut() {
+        for (code in listOf("sign_in_required", "login_required")) {
+            val row = queueItem(state = "failed", error = ErrorInfo("Instagram needs you signed in.", "Import cookies in Settings > Accounts", code))
+                .toRowModel()
+            assertEquals(listOf(RowAction.Retry, RowAction.SignIn), row.actions)
+            assertTrue(row.needsSignIn)
+        }
+        // Other failures keep just Retry, and a queued item never offers Sign in.
+        assertFalse(queueItem(state = "failed", error = ErrorInfo("x", "y", "network")).toRowModel().needsSignIn)
+        assertFalse(RowAction.SignIn in validActions("failed"))
+        assertFalse(RowAction.SignIn in validActions("downloading", "login_required"))
+        assertFalse(RowAction.SignIn in validActions("cancelled", "sign_in_required"))
+        assertFalse(needsSignIn("done", "login_required"))
     }
 
     @Test fun percentIsClamped() {

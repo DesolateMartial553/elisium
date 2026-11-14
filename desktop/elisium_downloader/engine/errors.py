@@ -33,6 +33,48 @@ _TABLE: tuple[tuple[tuple[str, ...], ErrorInfo], ...] = (
         ),
     ),
     (
+        # Instagram stories and private posts print this without cookies.
+        (
+            "you need to log in to access this content",
+            "log in to view this content",
+            "you must be logged in to view",
+            "instagram needs you signed in",
+        ),
+        ErrorInfo(
+            "Instagram needs you signed in.",
+            "Choose a browser in Settings > Accounts",
+            "login_required",
+        ),
+    ),
+    (
+        # Instagram's own pacing message, not a plain HTTP 429.
+        (
+            "please wait a few minutes",
+            "instagram is limiting",
+            "request limit reached",
+        ),
+        ErrorInfo(
+            "Instagram is limiting requests. Wait a few minutes and try again.",
+            "Wait a few minutes and try again",
+            "rate_limited",
+        ),
+    ),
+    (
+        # yt-dlp could not open the browser's cookie store.
+        (
+            "could not find cookies database",
+            "failed to decrypt",
+            "could not copy chrome cookie database",
+            "could not find firefox cookies database",
+        ),
+        ErrorInfo(
+            "Elisium could not read that browser's cookies. "
+            "Close the browser or pick another.",
+            "Close the browser, or choose another browser in Settings",
+            "cookies_unreadable",
+        ),
+    ),
+    (
         ("video unavailable", "private video"),
         ErrorInfo(
             "This video is not available.", "Check the link", "video_unavailable"

@@ -205,6 +205,8 @@ class DownloadQueue:
         self._format_selector = format_selector
         self._limit_rate = limit_rate
         self._extra_args: tuple[str, ...] = ()
+        self._cookies_browser: str | None = None
+        self._cookies_file: str | None = None
         self._sleep = sleep
         self._run_download = run_download
         self._probe_url = probe_url
@@ -258,6 +260,19 @@ class DownloadQueue:
         with self._cond:
             self._extra_args = tuple(str(a) for a in args)
 
+    def set_cookies(
+        self, browser: str | None, file: str | os.PathLike[str] | None
+    ) -> None:
+        """Set how yt-dlp signs in (``--cookies-from-browser`` / ``--cookies``).
+
+        Applies to probes and downloads that start after this call. Only the
+        browser name and the file path are kept: the app never reads, copies or
+        logs the cookie contents, and they never reach history.
+        """
+        with self._cond:
+            self._cookies_browser = str(browser) if browser else None
+            self._cookies_file = None if file is None else str(file)
+
     def add_listener(self, callback: Callable[[dict[str, Any]], None]) -> None:
         with self._lock:
             self._listeners.append(callback)
@@ -278,9 +293,18 @@ class DownloadQueue:
     def probe(self, url: str) -> dict[str, Any]:
         """Probe *url* with the queue's own probe function and yt-dlp path.
 
-        Blocks while yt-dlp runs, so call it from a worker thread.
+        Uses the queue's current cookie setting, so Instagram stories can be
+        probed when the user has chosen a browser. Blocks while yt-dlp runs, so
+        call it from a worker thread.
         """
-        return self._probe_url(url, self._ytdlp)
+        with self._cond:
+            browser, file = self._cookies_browser, self._cookies_file
+        return self._probe_url(
+            url,
+            self._ytdlp,
+            cookies_browser=browser,
+            cookies_file=file,
+        )
 
     def items(self) -> list[dict[str, Any]]:
         """Every item, oldest first, as snapshots."""
@@ -654,7 +678,7 @@ class DownloadQueue:
         info: Mapping[str, Any] | None = None
         error: ErrorInfo | None = None
         try:
-            info = self._probe_url(item.url, self._ytdlp)
+            info = self.probe(item.url)
         except runner.ProbeError as exc:
             error = exc.info
         except OSError:  # pragma: no cover - defensive
@@ -741,6 +765,8 @@ class DownloadQueue:
             extra = (
                 item.extra_args if item.extra_args is not None else self._extra_args
             )
+            cookies_browser = self._cookies_browser
+            cookies_file = self._cookies_file
         opts = runner.DownloadOptions(
             url=item.url,
             output_dir=self.output_dir,
@@ -751,6 +777,8 @@ class DownloadQueue:
             extra_args=extra,
             ytdlp=self._ytdlp,
             path_file=path_file,
+            cookies_browser=cookies_browser,
+            cookies_file=cookies_file,
         )
         handle = self._run_download(
             opts, lambda event: self._on_progress(item, event)

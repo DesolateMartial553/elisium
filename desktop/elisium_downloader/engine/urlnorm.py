@@ -5,6 +5,8 @@ Rules come from ``core-spec/SPEC.md`` (layer 3 of the dedupe plan):
 * every YouTube video URL form collapses to one canonical watch URL;
 * tracking parameters are dropped;
 * a playlist URL keeps its ``list`` parameter;
+* Instagram and TikTok links lose their share-link junk, so the same video
+  from the app, the mobile site and the web site is one queue item;
 * other sites keep everything except the fragment and ``utm_*`` parameters.
 """
 
@@ -21,10 +23,41 @@ _VIDEO_PATH_PREFIXES = ("shorts", "embed", "live", "v")
 _VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _TIME_RE = re.compile(r"^(?:\d+h)?(?:\d+m)?(?:\d+s)?$")
 
+_INSTAGRAM_HOST = "instagram.com"
+# The short hosts are their own domain, so they are matched before the suffix.
+_TIKTOK_HOSTS = {"tiktok.com", "vm.tiktok.com", "vt.tiktok.com"}
+
 # Dropped on every site / every YouTube URL.
 _TRACKING_PARAMS = {"si", "feature", "pp"}
 # Dropped only when the URL points at a single video (not a playlist).
 _VIDEO_ONLY_DROP = {"list", "index"}
+
+# Share-link parameters added by the Instagram app / web share sheet.
+# ``img_index`` is deliberately kept: it selects one image of a carousel post.
+_INSTAGRAM_DROP = {"igsh", "igshid"}
+# Share-link parameters added by the TikTok app and web share sheet.
+_TIKTOK_DROP = {
+    "_t",
+    "_r",
+    "is_from_webapp",
+    "sender_device",
+    "sender_web_id",
+    "share_app_id",
+    "share_link_id",
+    "share_item_id",
+    "source",
+    "checksum",
+    "refer",
+    "region",
+    "lang",
+    "u_code",
+    "timestamp",
+    "user_id",
+    "tt_from",
+}
+
+# Instagram post paths that carry a shortcode, per the brief.
+_INSTAGRAM_POST_PREFIXES = ("p", "reel", "tv")
 
 
 def _split(url: str):
@@ -41,6 +74,25 @@ def _split(url: str):
     return parts
 
 
+def _bare_host(host: str) -> str:
+    """Lower-case *host* without a leading ``www.`` or ``m.``."""
+    h = host.lower().rstrip(".")
+    for prefix in ("www.", "m."):
+        if h.startswith(prefix):
+            h = h[len(prefix) :]
+    return h
+
+
+def _site_kind(host: str) -> str | None:
+    """``"instagram"`` / ``"tiktok"`` for those sites, else ``None``."""
+    h = _bare_host(host)
+    if h == _INSTAGRAM_HOST:
+        return "instagram"
+    if h in _TIKTOK_HOSTS:
+        return "tiktok"
+    return None
+
+
 def _is_start_time(value: str) -> bool:
     value = value.strip()
     if not value:
@@ -52,8 +104,8 @@ def _is_start_time(value: str) -> bool:
 
 def _host_kind(host: str) -> str | None:
     """Return ``"short"``, ``"full"`` for YouTube hosts, else ``None``."""
-    h = host.lower().rstrip(".")
-    for prefix in ("www.", "m.", "music."):
+    h = _bare_host(host)
+    for prefix in ("music.",):
         if h.startswith(prefix):
             h = h[len(prefix) :]
     if h == _SHORT_HOST:
@@ -120,6 +172,42 @@ def _normalise_youtube(parts, kind: str) -> str:
     return urlunsplit(("https", "www.youtube.com", path, query, ""))
 
 
+def _normalise_site(parts, site: str) -> str:
+    """Instagram/TikTok: lower-case host without ``www.``/``m.``, junk dropped."""
+    drop = _INSTAGRAM_DROP if site == "instagram" else _TIKTOK_DROP
+    query = _filter_query(parts.query, drop)
+    return urlunsplit(
+        (parts.scheme.lower(), _bare_host(parts.hostname or ""), parts.path, query, "")
+    )
+
+
+def _instagram_key(parts) -> str | None:
+    segments = [seg for seg in parts.path.split("/") if seg]
+    if len(segments) >= 2 and segments[0] in _INSTAGRAM_POST_PREFIXES:
+        shortcode = segments[1]
+        if _VIDEO_ID_RE.fullmatch(shortcode):
+            return f"instagram:{shortcode}"
+        return None
+    if (
+        len(segments) >= 3
+        and segments[0] == "stories"
+        and segments[1] != "highlights"
+        and segments[2].isdigit()
+    ):
+        # One story (a story tray has no id and is queued item by item).
+        return f"instagram:story:{segments[1]}:{segments[2]}"
+    return None
+
+
+def _tiktok_key(parts) -> str | None:
+    segments = [seg for seg in parts.path.split("/") if seg]
+    if len(segments) >= 3 and segments[0].startswith("@") and segments[1] == "video":
+        video_id = segments[2]
+        if video_id.isdigit():
+            return f"tiktok:{video_id}"
+    return None
+
+
 def normalize_url(url: str) -> str:
     """Return the canonical form of *url* used for queue dedupe.
 
@@ -130,6 +218,9 @@ def normalize_url(url: str) -> str:
     kind = _host_kind(host)
     if kind is not None:
         return _normalise_youtube(parts, kind)
+    site = _site_kind(host)
+    if site is not None:
+        return _normalise_site(parts, site)
 
     scheme = parts.scheme.lower()
     netloc = host
@@ -149,12 +240,18 @@ def normalize_url(url: str) -> str:
 
 
 def video_key(url: str) -> str | None:
-    """Return ``"youtube:<ID>"`` for a YouTube video, else ``None``."""
+    """Return ``"youtube:<ID>"``, ``"instagram:..."``, ``"tiktok:<id>"`` or ``None``."""
     parts = _split(url)
-    kind = _host_kind((parts.hostname or "").lower())
-    if kind is None:
-        return None
-    video_id = _video_id(parts, kind)
-    if video_id is None:
-        return None
-    return f"youtube:{video_id}"
+    host = (parts.hostname or "").lower()
+    kind = _host_kind(host)
+    if kind is not None:
+        video_id = _video_id(parts, kind)
+        if video_id is None:
+            return None
+        return f"youtube:{video_id}"
+    site = _site_kind(host)
+    if site == "instagram":
+        return _instagram_key(parts)
+    if site == "tiktok":
+        return _tiktok_key(parts)
+    return None

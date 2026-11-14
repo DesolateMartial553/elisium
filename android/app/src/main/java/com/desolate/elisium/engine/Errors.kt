@@ -9,6 +9,37 @@ private val FALLBACK = ErrorInfo("Download failed.", "See Details", "unknown")
 private val TABLE: List<Pair<List<String>, ErrorInfo>> = listOf(
     listOf("sign in to confirm", "not a bot") to
         ErrorInfo("The site wants you to be signed in.", "Import cookies", "sign_in_required"),
+    // Instagram stories and private posts print this without cookies. Android has no browser
+    // access, so the fix points at the cookies.txt import in Settings > Accounts.
+    listOf(
+        "you need to log in to access this content",
+        "log in to view this content",
+        "you must be logged in to view",
+        "instagram needs you signed in",
+    ) to
+        ErrorInfo("Instagram needs you signed in.", "Import cookies in Settings > Accounts", "login_required"),
+    // Instagram's own pacing message, not a plain HTTP 429.
+    listOf("please wait a few minutes", "instagram is limiting", "request limit reached") to
+        ErrorInfo(
+            "Instagram is limiting requests. Wait a few minutes and try again.",
+            "Wait a few minutes and try again",
+            "rate_limited",
+        ),
+    // The imported cookies.txt could not be used (unreadable, or no longer a valid session).
+    listOf(
+        "could not find cookies database",
+        "failed to decrypt",
+        "could not copy chrome cookie database",
+        "could not find firefox cookies database",
+        "not a netscape format cookie file",
+        "netscape format cookies file",
+        "cookies are no longer valid",
+    ) to
+        ErrorInfo(
+            "Elisium could not read those cookies.",
+            "Import cookies.txt again in Settings > Accounts",
+            "cookies_unreadable",
+        ),
     listOf("video unavailable", "private video") to
         ErrorInfo("This video is not available.", "Check the link", "video_unavailable"),
     listOf("requested format is not available") to

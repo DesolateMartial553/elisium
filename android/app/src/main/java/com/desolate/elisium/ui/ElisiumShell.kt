@@ -70,6 +70,12 @@ private enum class Tab(val titleRes: Int, val icon: ImageVector) {
 fun ElisiumShell(vm: ElisiumViewModel, engine: EngineState) {
     var tabIndex by rememberSaveable { mutableIntStateOf(0) }
     val tab = Tab.entries[tabIndex]
+    // Set by a failed item's "Sign in": the Settings tab opens with Accounts in view.
+    var focusAccounts by remember { mutableStateOf(false) }
+    val signIn = {
+        focusAccounts = true
+        tabIndex = Tab.Settings.ordinal
+    }
     // Lives outside AnimatedContent: the Downloads screen is disposed on a tab switch and would lose a half-typed link.
     var linkInput by rememberSaveable { mutableStateOf("") }
     val snackbar = remember { SnackbarHostState() }
@@ -161,9 +167,21 @@ fun ElisiumShell(vm: ElisiumViewModel, engine: EngineState) {
                 label = "tab",
             ) { current ->
                 when (current) {
-                    Tab.Downloads -> DownloadsScreen(vm.queue, linkInput, { linkInput = it }, Modifier.fillMaxSize())
+                    Tab.Downloads -> DownloadsScreen(
+                        vm.queue,
+                        linkInput,
+                        { linkInput = it },
+                        Modifier.fillMaxSize(),
+                        onSignIn = signIn,
+                    )
                     Tab.History -> HistoryScreen(vm.history, showMessage = { vm.postMessage(it) }, modifier = Modifier.fillMaxSize())
-                    Tab.Settings -> SettingsScreen(vm.settings, engine, Modifier.fillMaxSize())
+                    Tab.Settings -> SettingsScreen(
+                        vm.settings,
+                        engine,
+                        Modifier.fillMaxSize(),
+                        focusAccounts = focusAccounts,
+                        onAccountsShown = { focusAccounts = false },
+                    )
                 }
             }
         }

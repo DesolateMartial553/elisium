@@ -155,13 +155,17 @@ class FakeBackend : DownloadBackend {
         FakeHandle().also { it.finish(successOutcome(request)) }
     }
     val probes = CopyOnWriteArrayList<String>()
+
+    /** The cookies file each probe was given, in order (null when none). */
+    val probeCookies = CopyOnWriteArrayList<File?>()
     val requests = CopyOnWriteArrayList<DownloadRequest>()
     private val startCount = AtomicInteger()
 
     val starts: Int get() = startCount.get()
 
-    override suspend fun probe(url: String): ProbeResult {
+    override suspend fun probe(url: String, cookiesFile: File?): ProbeResult {
         probes.add(url)
+        probeCookies.add(cookiesFile)
         return probeHandler(url)
     }
 

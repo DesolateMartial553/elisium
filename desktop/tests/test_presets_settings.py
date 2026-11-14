@@ -88,6 +88,44 @@ def test_unknown_keys_ignored_and_bad_values_defaulted(tmp_path) -> None:
     path.write_text(json.dumps({"concurrency": 3, "future": 1, "preset_id": "x"}))
     s = st.load(path)
     assert s.concurrency == 3 and s.preset_id == "best"
+    # A settings file written before the cookie fields existed still loads.
+    assert s.cookies_browser is None and s.cookies_file is None
+
+
+def test_cookie_settings_round_trip(tmp_path) -> None:
+    path = tmp_path / "settings.json"
+    original = st.Settings(cookies_browser="firefox", cookies_file="/tmp/cookies.txt")
+    st.save(original, path)
+    assert st.load(path) == original
+    assert json.loads(path.read_text())["cookies_browser"] == "firefox"
+
+
+def test_cookie_settings_validation() -> None:
+    assert st.Settings().cookies_browser is None
+    assert st.Settings(cookies_browser=" Chrome ").cookies_browser == "chrome"
+    assert st.Settings(cookies_browser="safari").cookies_browser is None
+    assert st.Settings(cookies_browser=5).cookies_browser is None  # type: ignore[arg-type]
+    assert st.Settings(cookies_file=" /tmp/c.txt ").cookies_file == "/tmp/c.txt"
+    assert st.Settings(cookies_file="   ").cookies_file is None
+    assert st.Settings(cookies_file=7).cookies_file is None  # type: ignore[arg-type]
+    assert set(st.COOKIE_BROWSERS) == {
+        "firefox", "chrome", "chromium", "brave", "edge", "vivaldi", "opera",
+    }
+
+
+def test_apply_pushes_the_cookie_choice() -> None:
+    calls: list = []
+
+    class FakeQueue:
+        def set_concurrency(self, v): pass
+        def set_limit_rate(self, v): pass
+        def set_format_selector(self, v): pass
+        def set_extra_args(self, v): pass
+        def set_cookies(self, browser, file): calls.append((browser, file))
+
+    st.apply(st.Settings(cookies_browser="brave", cookies_file=None), FakeQueue())
+    st.apply(st.Settings(), FakeQueue())
+    assert calls == [("brave", None), (None, None)]
 
 
 def test_apply_calls_queue_setters() -> None:
@@ -98,7 +136,9 @@ def test_apply_calls_queue_setters() -> None:
         def set_limit_rate(self, v): calls.append(("l", v))
         def set_format_selector(self, v): calls.append(("f", v))
         def set_extra_args(self, v): calls.append(("e", tuple(v)))
+        def set_cookies(self, browser, file): calls.append(("ck", browser, file))
 
     st.apply(st.Settings(concurrency=4, speed_limit="1M", preset_id="audio-flac"), FakeQueue())
     assert calls == [("c", 4), ("l", "1M"), ("f", "bestaudio/best"),
-                     ("e", ("-x", "--audio-format", "flac"))]
+                     ("e", ("-x", "--audio-format", "flac")),
+                     ("ck", None, None)]

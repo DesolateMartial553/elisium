@@ -74,6 +74,8 @@ CANCELLABLE = frozenset(
     {"queued", "probing", "downloading", "merging", "converting", "paused"}
 )
 RETRYABLE = frozenset({"failed", "cancelled"})
+# Failures that Settings > Accounts fixes (see engine/errors.py).
+SIGN_IN_CODES = frozenset({"sign_in_required", "login_required"})
 SECTIONS = ("Downloads", "History", "Settings")
 ACTIVE = frozenset({"probing", "downloading", "merging", "converting"})
 
@@ -756,6 +758,11 @@ class MainWindow(QMainWindow):
             theme.apply(app, settings.appearance)
         theme.set_reduce_motion(settings.reduce_motion)
 
+    def open_accounts(self) -> None:
+        """Show Settings > Accounts, where a sign-in failure tells the user to go."""
+        self.show_section(2)
+        self.settings_page.show_accounts()
+
     # -- model feed ------------------------------------------------------
     def _on_event(self, event: dict[str, Any]) -> None:
         self.model.handle_event(event)
@@ -764,6 +771,15 @@ class MainWindow(QMainWindow):
         if self.tray is not None:
             self.tray.on_event(event)
         item = event.get("item")
+        if isinstance(item, dict) and item.get("state") == "failed":
+            error = item.get("error") or {}
+            if error.get("code") in SIGN_IN_CODES:
+                # The error's suggested action: Settings > Accounts.
+                self.statusBar().showMessage(
+                    f"{error.get('message', 'Sign-in needed.')} "
+                    f"{error.get('fix', 'Settings > Accounts')}",
+                    12000,
+                )
         if (
             self.settings.notify_on_done
             and event.get("type") == "state"
@@ -1079,6 +1095,12 @@ class MainWindow(QMainWindow):
             menu.addAction(action)
         menu.addSeparator()
         menu.addAction(self.copy_action)
+        error = (self.selected_snapshot() or {}).get("error") or {}
+        if error.get("code") in SIGN_IN_CODES:
+            sign_in = menu.addAction("Sign in...")
+            sign_in.setToolTip("Choose a browser in Settings > Accounts")
+            sign_in.setStatusTip("Choose a browser in Settings > Accounts")
+            sign_in.triggered.connect(self.open_accounts)
         menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def build_shortcuts_dialog(self) -> QDialog:

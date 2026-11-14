@@ -15,6 +15,39 @@ private val TIME_RE = Regex("(?:\\d+h)?(?:\\d+m)?(?:\\d+s)?")
 
 private val TRACKING_PARAMS = setOf("si", "feature", "pp")
 
+private const val INSTAGRAM_HOST = "instagram.com"
+
+/** The TikTok short hosts are their own domain, so they are matched before any suffix rule. */
+private val TIKTOK_HOSTS = setOf("tiktok.com", "vm.tiktok.com", "vt.tiktok.com")
+
+// Share-link parameters added by the Instagram app / web share sheet. `img_index` is
+// deliberately kept: it selects one image of a carousel post.
+private val INSTAGRAM_DROP = setOf("igsh", "igshid")
+
+// Share-link parameters added by the TikTok app and web share sheet.
+private val TIKTOK_DROP = setOf(
+    "_t",
+    "_r",
+    "is_from_webapp",
+    "sender_device",
+    "sender_web_id",
+    "share_app_id",
+    "share_link_id",
+    "share_item_id",
+    "source",
+    "checksum",
+    "refer",
+    "region",
+    "lang",
+    "u_code",
+    "timestamp",
+    "user_id",
+    "tt_from",
+)
+
+// Instagram post paths that carry a shortcode.
+private val INSTAGRAM_POST_PREFIXES = setOf("p", "reel", "tv")
+
 /** Python `str.isspace()` for the characters that matter here. */
 internal fun isPySpace(c: Char): Boolean =
     c.isWhitespace() || c == '\u00a0' || c == '\u0085' || c == '\u2007' || c == '\u202f'
@@ -192,16 +225,33 @@ private fun isStartTime(value: String): Boolean {
     return TIME_RE.matches(v) && v.any { it in '0'..'9' }
 }
 
-/** "short", "full" for YouTube hosts, else null. */
-private fun hostKind(host: String): String? {
+/** Lower-case [host] without a leading `www.` or `m.` (Python's `_bare_host`). */
+private fun bareHost(host: String): String {
     var h = host.lowercase().trimEnd('.')
-    for (prefix in listOf("www.", "m.", "music.")) {
+    for (prefix in listOf("www.", "m.")) {
         if (h.startsWith(prefix)) h = h.substring(prefix.length)
     }
+    return h
+}
+
+/** "short", "full" for YouTube hosts, else null. */
+private fun hostKind(host: String): String? {
+    var h = bareHost(host)
+    if (h.startsWith("music.")) h = h.substring("music.".length)
     if (h == SHORT_HOST) return "short"
     if (h in YOUTUBE_HOSTS) return "full"
     return null
 }
+
+/** "instagram", "tiktok" for those sites, else null. */
+private fun siteKind(host: String): String? {
+    val h = bareHost(host)
+    if (h == INSTAGRAM_HOST) return "instagram"
+    if (h in TIKTOK_HOSTS) return "tiktok"
+    return null
+}
+
+private fun isAllDigits(text: String): Boolean = text.isNotEmpty() && text.all { it in '0'..'9' }
 
 private fun videoIdOf(parts: Parts, kind: String): String? {
     val segments = parts.path.split('/').filter { it.isNotEmpty() }
@@ -248,6 +298,38 @@ private fun normaliseYoutube(parts: Parts, kind: String): String {
     return urlUnsplit("https", "www.youtube.com", path, filterQuery(parts.query, TRACKING_PARAMS))
 }
 
+/** Instagram/TikTok: lower-case host without `www.`/`m.`, share-link junk dropped. */
+private fun normaliseSite(parts: Parts, site: String): String {
+    val drop = if (site == "instagram") INSTAGRAM_DROP else TIKTOK_DROP
+    val query = filterQuery(parts.query, drop)
+    return urlUnsplit(parts.scheme.lowercase(), bareHost(parts.hostname ?: ""), parts.path, query)
+}
+
+private fun instagramKey(parts: Parts): String? {
+    val segments = parts.path.split('/').filter { it.isNotEmpty() }
+    if (segments.size >= 2 && segments[0] in INSTAGRAM_POST_PREFIXES) {
+        val shortcode = segments[1]
+        return if (VIDEO_ID_RE.matches(shortcode)) "instagram:$shortcode" else null
+    }
+    if (segments.size >= 3 && segments[0] == "stories" && segments[1] != "highlights" &&
+        isAllDigits(segments[2])
+    ) {
+        // One story; a story tray has no id and is queued item by item.
+        return "instagram:story:${segments[1]}:${segments[2]}"
+    }
+    return null
+}
+
+private fun tiktokKey(parts: Parts): String? {
+    val segments = parts.path.split('/').filter { it.isNotEmpty() }
+    if (segments.size >= 3 && segments[0].startsWith("@") && segments[1] == "video" &&
+        isAllDigits(segments[2])
+    ) {
+        return "tiktok:${segments[2]}"
+    }
+    return null
+}
+
 /**
  * The canonical form of [url] used for queue dedupe.
  * @throws IllegalArgumentException for empty input or input without a host.
@@ -257,6 +339,8 @@ fun normalizeUrl(url: String): String {
     val host = (parts.hostname ?: "").lowercase()
     val kind = hostKind(host)
     if (kind != null) return normaliseYoutube(parts, kind)
+    val site = siteKind(host)
+    if (site != null) return normaliseSite(parts, site)
 
     val scheme = parts.scheme
     var netloc = host
@@ -274,10 +358,18 @@ fun normalizeUrl(url: String): String {
     return urlUnsplit(scheme, netloc, parts.path, query)
 }
 
-/** `"youtube:<ID>"` for a YouTube video, else null. */
+/** `"youtube:<ID>"`, `"instagram:..."`, `"tiktok:<id>"`, else null. */
 fun videoKey(url: String): String? {
     val parts = split(url)
-    val kind = hostKind((parts.hostname ?: "").lowercase()) ?: return null
-    val videoId = videoIdOf(parts, kind) ?: return null
-    return "youtube:$videoId"
+    val host = (parts.hostname ?: "").lowercase()
+    val kind = hostKind(host)
+    if (kind != null) {
+        val videoId = videoIdOf(parts, kind) ?: return null
+        return "youtube:$videoId"
+    }
+    return when (siteKind(host)) {
+        "instagram" -> instagramKey(parts)
+        "tiktok" -> tiktokKey(parts)
+        else -> null
+    }
 }

@@ -71,6 +71,21 @@ def _path(value: str | Path) -> str:
     return str(Path(value).expanduser())
 
 
+def _cookie_args(
+    browser: str | None, file: str | Path | None
+) -> list[str]:
+    """The yt-dlp cookie flags for *browser* / *file* (browser wins).
+
+    Only the browser name or the file path goes on the command line; the app
+    never reads the file and never logs what is in it.
+    """
+    if browser:
+        return ["--cookies-from-browser", str(browser)]
+    if file:
+        return ["--cookies", _path(file)]
+    return []
+
+
 @dataclass(frozen=True)
 class DownloadOptions:
     """Everything one yt-dlp download run needs.
@@ -90,6 +105,11 @@ class DownloadOptions:
     fragment_retries: int = 3
     extra_args: Sequence[str] = ()
     path_file: str | Path | None = None
+    # Instagram stories/private posts need a signed-in session. Only the browser
+    # name or the cookies.txt path is kept: the app never reads, copies or logs
+    # the cookie contents (the browser wins when both are set).
+    cookies_browser: str | None = None
+    cookies_file: str | Path | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.url, str) or not self.url.strip():
@@ -156,6 +176,7 @@ def build_command(opts: DownloadOptions) -> list[str]:
         )
     if opts.limit_rate:
         argv.extend(["--limit-rate", str(opts.limit_rate)])
+    argv.extend(_cookie_args(opts.cookies_browser, opts.cookies_file))
     argv.extend(str(arg) for arg in opts.extra_args)
     argv.append(opts.url)
     return argv
@@ -170,6 +191,40 @@ class ProbeError(Exception):
         self.raw = raw
 
 
+_INSTAGRAM_HOSTS = frozenset({"instagram.com"})
+
+
+def _bare_host(url: str) -> str:
+    """The lower-case host of *url* without ``www.`` / ``m.``, else ``""``."""
+    try:
+        host = (urlsplit(url).hostname or "").lower().rstrip(".")
+    except ValueError:
+        return ""
+    for prefix in ("www.", "m."):
+        if host.startswith(prefix):
+            host = host[len(prefix) :]
+    return host
+
+
+def _is_instagram_story_tray(url: str) -> bool:
+    """True for ``instagram.com/stories/<user>/`` and ``/stories/highlights/<id>``.
+
+    A story URL that carries its own numeric id (``/stories/<user>/<id>``) is
+    one story, not a tray.
+    """
+    if _bare_host(url) not in _INSTAGRAM_HOSTS:
+        return False
+    try:
+        segments = [s for s in urlsplit(url).path.split("/") if s]
+    except ValueError:
+        return False
+    if not segments or segments[0] != "stories":
+        return False
+    if len(segments) == 2 and segments[1] != "highlights":
+        return True  # /stories/<user>/: the whole tray
+    return len(segments) == 3 and segments[1] == "highlights"
+
+
 def _looks_like_playlist(url: str) -> bool:
     """True when *url* addresses a playlist rather than one video."""
     try:
@@ -179,6 +234,8 @@ def _looks_like_playlist(url: str) -> bool:
     segments = [segment for segment in parts.path.split("/") if segment]
     query = dict(parse_qsl(parts.query, keep_blank_values=True))
     if query.get("list") and not query.get("v"):
+        return True
+    if _is_instagram_story_tray(url):
         return True
     return bool(segments) and segments[0] == "playlist"
 
@@ -205,18 +262,23 @@ def probe(
     url: str,
     ytdlp: str = "yt-dlp",
     *,
+    cookies_browser: str | None = None,
+    cookies_file: str | Path | None = None,
     timeout: float | None = None,
 ) -> dict[str, Any]:
     """Return yt-dlp's ``-J`` info dict for *url*.
 
-    Single videos use ``--no-playlist``; playlist links use
-    ``--flat-playlist`` so probing a big playlist stays cheap. Raises
-    :class:`ProbeError` carrying an :class:`ErrorInfo` and the raw output.
+    Single videos use ``--no-playlist``; playlist links and Instagram story
+    trays use ``--flat-playlist`` so probing stays cheap. The cookie options
+    are passed through unchanged so a story tray can be probed when the site
+    needs a signed-in session. Raises :class:`ProbeError` carrying an
+    :class:`ErrorInfo` and the raw output.
     """
     if not isinstance(url, str) or not url.strip():
         raise ValueError("url must be a non-empty string")
     argv = [str(ytdlp), "-J", "--no-download"]
     argv.append("--flat-playlist" if _looks_like_playlist(url) else "--no-playlist")
+    argv.extend(_cookie_args(cookies_browser, cookies_file))
     argv.append(url)
 
     try:

@@ -458,7 +458,7 @@ def test_concurrency_limit_is_honoured(harness) -> None:
 
     h = harness(
         concurrency=2,
-        probe_url=lambda url, ytdlp="yt-dlp": {"title": "T"},
+        probe_url=lambda url, ytdlp="yt-dlp", **kw: {"title": "T"},
         run_download=fake_run,
     )
     for index in range(6):
@@ -800,7 +800,7 @@ def test_setters_apply_to_next_started_download(harness) -> None:
         seen.append(opts)
         return FakeHandle()
 
-    h = harness(probe_url=lambda url, ytdlp="yt-dlp": {"title": "T"}, run_download=fake_run)
+    h = harness(probe_url=lambda url, ytdlp="yt-dlp", **kw: {"title": "T"}, run_download=fake_run)
     h.queue.set_limit_rate("2M")
     h.queue.set_format_selector("wv*+wa/w")
     h.queue.set_extra_args(["-x", "--audio-format", "mp3"])
@@ -824,13 +824,48 @@ def test_set_format_selector_rejects_empty(harness) -> None:
         harness().queue.set_format_selector("")
 
 
+# -- brief 8A: cookies ----------------------------------------------------
+def test_cookies_reach_the_probe_and_the_download(harness) -> None:
+    h = harness(body=SUCCESS_BODY)
+    h.queue.set_cookies("firefox", "/tmp/cookies.txt")
+    item = h.queue.add("https://www.instagram.com/stories/tiktok/3211234567890123456/")
+    h.queue.start()
+    assert h.queue.wait_until_idle(15)
+    assert h.queue.item(item["id"])["state"] == "done"
+
+    probe_argv = h.probes()[0]
+    assert probe_argv[probe_argv.index("--cookies-from-browser") + 1] == "firefox"
+    assert "--cookies" not in probe_argv
+    download_argv = h.downloads()[0]
+    assert download_argv[download_argv.index("--cookies-from-browser") + 1] == "firefox"
+    # The cookie file path never reaches history.
+    assert "/tmp/cookies.txt" not in json.dumps(h.row(item) or {})
+
+
+def test_cookies_file_flag_and_reset(harness) -> None:
+    h = harness(body=SUCCESS_BODY)
+    h.queue.set_cookies(None, "/tmp/cookies.txt")
+    h.queue.add("https://www.tiktok.com/@tiktok/video/7106594312292453675")
+    h.queue.start()
+    assert h.queue.wait_until_idle(15)
+    probe_argv = h.probes()[0]
+    assert probe_argv[probe_argv.index("--cookies") + 1] == "/tmp/cookies.txt"
+    assert "--cookies-from-browser" not in probe_argv
+
+    h.queue.set_cookies(None, None)
+    h.queue.add("https://vimeo.com/2")
+    assert h.queue.wait_until_idle(15)
+    last = h.probes()[-1]
+    assert "--cookies" not in last and "--cookies-from-browser" not in last
+
+
 # -- per-item overrides (brief 2C) ----------------------------------------
 def _recording_harness(harness, seen: list):
     def fake_run(opts, on_event):
         seen.append(opts)
         return FakeHandle()
 
-    return harness(probe_url=lambda url, ytdlp="yt-dlp": {"title": "Probed"}, run_download=fake_run)
+    return harness(probe_url=lambda url, ytdlp="yt-dlp", **kw: {"title": "Probed"}, run_download=fake_run)
 
 
 def test_item_overrides_beat_queue_defaults(harness) -> None:
@@ -886,7 +921,7 @@ def test_duplicate_add_keeps_original_overrides(harness) -> None:
 def test_public_probe_uses_injected_probe_and_ytdlp(harness) -> None:
     calls: list[tuple[str, str]] = []
 
-    def fake_probe(url, ytdlp="yt-dlp"):
+    def fake_probe(url, ytdlp="yt-dlp", **kw):
         calls.append((url, ytdlp))
         return {"title": "Probed"}
 

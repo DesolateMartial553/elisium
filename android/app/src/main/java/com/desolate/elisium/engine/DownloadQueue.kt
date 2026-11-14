@@ -143,6 +143,7 @@ class DownloadQueue(
     private var formatSelector: String = formatSelector
     private var limitRate: String? = limitRate
     private var extraArgs: List<String> = emptyList()
+    private var cookiesFile: File? = null
     private var concurrencyValue: Int = checkConcurrency(concurrency)
 
     private val entries = HashMap<Int, Entry>()
@@ -185,6 +186,16 @@ class DownloadQueue(
     }
 
     fun setExtraArgs(args: List<String>) = lock.withLock { extraArgs = args.toList() }
+
+    /**
+     * Sets the imported `cookies.txt` for probes and downloads that start afterwards (null clears
+     * it). Only the path is held; the app never reads, copies or logs the cookie contents, and the
+     * path never reaches history.
+     */
+    fun setCookiesFile(file: File?) = lock.withLock { cookiesFile = file }
+
+    /** The cookies file when it is really there: yt-dlp must not be told to read a missing path. */
+    private fun activeCookiesFile(): File? = lock.withLock { cookiesFile?.takeIf { it.isFile } }
 
     // -- reading ---------------------------------------------------------
     fun item(id: Int): QueueItem? = lock.withLock { entries[id]?.snapshot() }
@@ -514,7 +525,7 @@ class DownloadQueue(
         var info: JsonObject? = null
         var error: ErrorInfo? = null
         try {
-            info = backend.probe(e.url)
+            info = backend.probe(e.url, activeCookiesFile())
         } catch (f: ProbeFailure) {
             error = explain(f.errorText)
         } catch (c: CancellationException) {
@@ -611,6 +622,7 @@ class DownloadQueue(
      */
     private suspend fun download(e: Entry): ErrorInfo? {
         val token = Any()
+        val cookies = activeCookiesFile()
         val request = lock.withLock {
             e.token = token
             DownloadRequest(
@@ -622,6 +634,7 @@ class DownloadQueue(
                 stagingDir = stagingDir,
                 processId = "item-${e.id}",
                 expectedBytes = e.expectedBytes,
+                cookiesFile = cookies,
             )
         }
         val outcome: DownloadOutcome = try {

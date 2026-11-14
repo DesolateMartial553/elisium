@@ -75,4 +75,30 @@ class ShareIntakeTest {
         assertEquals("Added 0 links (2 already in the list)", shareConfirmation(0, 2, 2))
         assertEquals("No links found in the shared text", shareConfirmation(0, 0, 0))
     }
+
+    // -- Instagram / TikTok share sheets (brief 8B) --------------------------------------
+    @Test
+    fun instagramShareTextYieldsTheFirstUrl() {
+        val text = "someone on Instagram: \"Dinner again\" https://www.instagram.com/reel/CabcDEF123/?igsh=MTZ0dA== " +
+            "Copy this link to share the post."
+        assertEquals(listOf("https://www.instagram.com/reel/CabcDEF123/?igsh=MTZ0dA=="), extractUrls(text))
+    }
+
+    @Test
+    fun tiktokShareTextYieldsTheFirstUrl() {
+        val text = "Check out tiktok's video! #TikTok https://www.tiktok.com/@tiktok/video/7106594312292453675?_t=8abc&_r=1"
+        val urls = extractUrls(text)
+        assertEquals(listOf("https://www.tiktok.com/@tiktok/video/7106594312292453675?_t=8abc&_r=1"), urls)
+        assertEquals("the first URL is the one queued", "https://www.tiktok.com/@tiktok/video/7106594312292453675?_t=8abc&_r=1", urls.first())
+    }
+
+    @Test
+    fun shareTextWithWordsAroundItKeepsOnlyTheLinks() {
+        val text = "Look at this: https://www.instagram.com/p/CabcDEF123/ - sent from my phone (Instagram)"
+        assertEquals(listOf("https://www.instagram.com/p/CabcDEF123/"), extractUrls(text))
+        assertEquals(
+            listOf("https://vm.tiktok.com/ZMabc123/"),
+            extractUrls("<https://vm.tiktok.com/ZMabc123/>\nshared with Elisium"),
+        )
+    }
 }

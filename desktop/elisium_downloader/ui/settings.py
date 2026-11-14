@@ -13,14 +13,52 @@ from elisium_downloader.engine import paths
 from elisium_downloader.engine.presets import DEFAULT_ID, PRESETS, get
 from elisium_downloader.engine.queue import DEFAULT_CONCURRENCY, MAX_CONCURRENCY, DownloadQueue
 
-__all__ = ["Settings", "apply", "default_path", "load", "save", "valid_speed_limit"]
+__all__ = [
+    "COOKIE_BROWSERS",
+    "Settings",
+    "apply",
+    "default_path",
+    "load",
+    "save",
+    "valid_cookie_browser",
+    "valid_cookies_file",
+    "valid_speed_limit",
+]
 
 _LIMIT_RE = re.compile(r"^\d+(\.\d+)?[KMG]?$")
+
+# Browsers yt-dlp can read cookies from (``--cookies-from-browser``). The order
+# is the order of the Settings dropdown.
+COOKIE_BROWSERS: tuple[str, ...] = (
+    "firefox",
+    "chrome",
+    "chromium",
+    "brave",
+    "edge",
+    "vivaldi",
+    "opera",
+)
 
 
 def valid_speed_limit(value: object) -> str | None:
     """Return *value* if it is a valid ``--limit-rate`` string, else ``None``."""
     if isinstance(value, str) and _LIMIT_RE.match(value.strip()):
+        return value.strip()
+    return None
+
+
+def valid_cookie_browser(value: object) -> str | None:
+    """Return *value* as a lower-case browser name, or ``None`` ("not signed in")."""
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in COOKIE_BROWSERS:
+            return lowered
+    return None
+
+
+def valid_cookies_file(value: object) -> str | None:
+    """Return *value* if it is a usable cookies.txt path, else ``None``."""
+    if isinstance(value, str) and value.strip():
         return value.strip()
     return None
 
@@ -34,6 +72,11 @@ class Settings:
     close_to_tray: bool = False
     appearance: str = "system"  # "system" | "night" | "day"
     reduce_motion: bool = False
+    # Instagram stories/private posts need a signed-in session; yt-dlp can read
+    # the cookies of a browser the user is already signed in to, or a
+    # cookies.txt file. Browser wins when both are set.
+    cookies_browser: str | None = None
+    cookies_file: str | None = None
 
     def __post_init__(self) -> None:
         self.validate()
@@ -54,6 +97,8 @@ class Settings:
             self.appearance = "system"
         if not isinstance(self.reduce_motion, bool):
             self.reduce_motion = False
+        self.cookies_browser = valid_cookie_browser(self.cookies_browser)
+        self.cookies_file = valid_cookies_file(self.cookies_file)
 
 
 def default_path() -> Path:
@@ -99,5 +144,6 @@ def apply(settings: Settings, queue: DownloadQueue) -> None:
     queue.set_limit_rate(settings.speed_limit)
     queue.set_format_selector(preset.format_selector)
     queue.set_extra_args(preset.extra_args)
+    queue.set_cookies(settings.cookies_browser, settings.cookies_file)
 
 

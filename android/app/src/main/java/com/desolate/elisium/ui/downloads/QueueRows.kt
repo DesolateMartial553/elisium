@@ -9,15 +9,23 @@ import com.desolate.elisium.ui.progressLine
 import com.desolate.elisium.ui.speedWords
 import kotlin.math.roundToInt
 
-enum class RowAction { Pause, Resume, Cancel, Retry }
+enum class RowAction { Pause, Resume, Cancel, Retry, SignIn }
+
+/** Errors whose fix is "sign in": the row offers a shortcut to Settings > Accounts. */
+val SIGN_IN_CODES: Set<String> = setOf("sign_in_required", "login_required")
 
 /** Which buttons a row offers for [state]. Only actions the queue will accept are listed. */
-fun validActions(state: String): List<RowAction> = when (state) {
+fun validActions(state: String, errorCode: String? = null): List<RowAction> = when (state) {
     "queued", "probing", "downloading", "merging", "converting" -> listOf(RowAction.Pause, RowAction.Cancel)
     "paused" -> listOf(RowAction.Resume, RowAction.Cancel)
-    "failed", "cancelled" -> listOf(RowAction.Retry)
+    "failed" -> if (errorCode in SIGN_IN_CODES) listOf(RowAction.Retry, RowAction.SignIn) else listOf(RowAction.Retry)
+    "cancelled" -> listOf(RowAction.Retry)
     else -> emptyList() // done, skipped
 }
+
+/** True when this failure is fixed in Settings > Accounts (a sign-in the site wants). */
+fun needsSignIn(state: String, errorCode: String?): Boolean =
+    state == "failed" && errorCode in SIGN_IN_CODES
 
 /** Cancelling a running item asks first; a waiting or paused one does not. */
 fun needsCancelConfirmation(state: String): Boolean = state in ACTIVE_STATES
@@ -37,6 +45,8 @@ data class QueueRowModel(
     val etaSpoken: String,
     val errorMessage: String?,
     val errorFix: String?,
+    /** The failure is fixed by importing cookies (Settings > Accounts). */
+    val needsSignIn: Boolean,
     val actions: List<RowAction>,
 )
 
@@ -65,7 +75,8 @@ fun QueueItem.toRowModel(): QueueRowModel {
         etaSpoken = if (running) etaWords(eta) else "",
         errorMessage = if (failedLike) error?.message else null,
         errorFix = if (failedLike) error?.fix else null,
-        actions = validActions(state),
+        needsSignIn = needsSignIn(state, error?.code),
+        actions = validActions(state, error?.code),
     )
 }
 

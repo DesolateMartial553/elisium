@@ -29,6 +29,9 @@ Terminal states: `done`, `failed`, `skipped`, `cancelled`. Also `paused` (resuma
 ## Format presets
 Best video, 1080p, 720p, Audio only (mp3, m4a, opus, flac), Smallest file. Default selector `bestvideo*+bestaudio/best`.
 
+## Sign-in (cookies)
+Some sites need a signed-in session (Instagram stories, private posts, some reels). Settings > Accounts offers one browser (`--cookies-from-browser firefox|chrome|chromium|brave|edge|vivaldi|opera`, default off) or an optional `cookies.txt` file; the browser wins when both are set. The app never asks for a password, never reads or copies the cookie contents, and keeps only the browser name / file path in settings - never in history. Instagram story trays (`/stories/<user>/`, `/stories/highlights/<id>/`) are playlists; a story URL with its own id is one item.
+
 ## Plain-language errors (raw log kept under Details)
 | yt-dlp text contains | Message | Suggested fix |
 |---|---|---|
@@ -39,6 +42,9 @@ Best video, 1080p, 720p, Audio only (mp3, m4a, opus, flac), Smallest file. Defau
 | `HTTP Error 429` | Too many requests. | Wait, lower concurrency |
 | `Unable to download` / timeout / connection | Network problem. | Retry (auto-retry already ran) |
 | `ffmpeg` not found | ffmpeg is missing. | Install ffmpeg |
+| Instagram `You need to log in to access this content` (stories, private posts) | Instagram needs you signed in. | Choose a browser in Settings > Accounts |
+| Instagram `Please wait a few minutes` | Instagram is limiting requests. Wait a few minutes and try again. | Wait a few minutes and try again |
+| `could not find ... cookies database` / `Failed to decrypt` | Elisium could not read that browser's cookies. Close the browser or pick another. | Close the browser, or choose another browser in Settings |
 | anything else | Download failed. | See Details |
 
 ## Accessibility (every UI)

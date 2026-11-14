@@ -4,6 +4,10 @@ import com.desolate.elisium.engine.MAX_CONCURRENCY
 import com.desolate.elisium.engine.Preset
 import com.desolate.elisium.engine.Presets
 import com.desolate.elisium.settings.Appearance
+import com.desolate.elisium.settings.CookiesCheck
+import com.desolate.elisium.settings.CookiesStatus
+import com.desolate.elisium.settings.CookiesStore
+import com.desolate.elisium.settings.NoCookiesStore
 import com.desolate.elisium.settings.SettingsStore
 import com.desolate.elisium.settings.validSpeedLimit
 import kotlinx.coroutines.CoroutineScope
@@ -39,6 +43,10 @@ data class SettingsUiState(
     val notifyOnDone: Boolean = true,
     val appearance: Appearance = Appearance.System,
     val reduceMotion: Boolean = false,
+    /** Nothing imported, or how many cookies the imported cookies.txt holds. */
+    val cookies: CookiesStatus = CookiesStatus.None,
+    /** Why the last pick was not imported, or null when it was (or nothing was picked yet). */
+    val cookiesRejected: CookiesCheck? = null,
 ) {
     val canDecrease: Boolean get() = concurrency > 1
     val canIncrease: Boolean get() = concurrency < MAX_CONCURRENCY
@@ -52,11 +60,14 @@ class SettingsViewModel(
     private val store: SettingsStore,
     private val scope: CoroutineScope,
     private val speedLimitDebounceMs: Long = SPEED_LIMIT_DEBOUNCE_MS,
+    private val cookies: CookiesStore = NoCookiesStore,
 ) {
     private val typed = MutableStateFlow<String?>(null)
+    private val cookieStatus = MutableStateFlow(cookies.status())
+    private val cookieRejected = MutableStateFlow<CookiesCheck?>(null)
     private var pendingSave: Job? = null
 
-    val state: StateFlow<SettingsUiState> = combine(store.settings, typed) { s, text ->
+    val state: StateFlow<SettingsUiState> = combine(store.settings, typed, cookieStatus, cookieRejected) { s, text, jar, rejected ->
         val shown = text ?: (s.speedLimit ?: "")
         SettingsUiState(
             presetId = s.presetId,
@@ -67,8 +78,10 @@ class SettingsViewModel(
             notifyOnDone = s.notifyOnDone,
             appearance = s.appearance,
             reduceMotion = s.reduceMotion,
+            cookies = jar,
+            cookiesRejected = rejected,
         )
-    }.stateIn(scope, SharingStarted.Eagerly, SettingsUiState())
+    }.stateIn(scope, SharingStarted.Eagerly, SettingsUiState(cookies = cookies.status()))
 
     fun setPreset(id: String) {
         scope.launch { store.setPresetId(id) }
@@ -122,5 +135,21 @@ class SettingsViewModel(
 
     fun setReduceMotion(value: Boolean) {
         scope.launch { store.setReduceMotion(value) }
+    }
+
+    /**
+     * Stores a picked cookies.txt (the caller reads the file off the main thread). A file that is
+     * not a cookie file is not stored, and [SettingsUiState.cookiesRejected] explains why.
+     */
+    fun importCookies(text: String?) {
+        val result = cookies.import(text)
+        cookieStatus.value = result.status
+        cookieRejected.value = result.check.takeIf { it !is CookiesCheck.Valid }
+    }
+
+    /** Deletes the imported cookies.txt; nothing else is touched. */
+    fun removeCookies() {
+        cookieStatus.value = cookies.remove()
+        cookieRejected.value = null
     }
 }

@@ -13,10 +13,12 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -31,6 +33,17 @@ from . import settings as settings_mod
 from .settings import Settings
 
 __all__ = ["SettingsPage", "fetch_ytdlp_version"]
+
+# Dropdown order; the value is what yt-dlp's --cookies-from-browser accepts.
+_COOKIE_BROWSER_LABELS: tuple[tuple[str, str], ...] = (
+    ("Firefox", "firefox"),
+    ("Chrome", "chrome"),
+    ("Chromium", "chromium"),
+    ("Brave", "brave"),
+    ("Microsoft Edge", "edge"),
+    ("Vivaldi", "vivaldi"),
+    ("Opera", "opera"),
+)
 
 
 def fetch_ytdlp_version(ytdlp: str = "yt-dlp") -> str | None:
@@ -116,6 +129,7 @@ class SettingsPage(QWidget):
         page.setContentsMargins(0, 0, 0, 0)
         scroll = _PageScroll()
         scroll.setObjectName("settingsScroll")
+        self._scroll = scroll
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -188,6 +202,53 @@ class SettingsPage(QWidget):
                        "The quality used for new downloads.")
         form.addRow(self._label("Default quality", self.preset_combo), self.preset_combo)
 
+        form = card("Accounts")
+        self.cookies_combo = QComboBox()
+        self.cookies_combo.addItem("Not signed in", None)
+        for label, key in _COOKIE_BROWSER_LABELS:
+            self.cookies_combo.addItem(label, key)
+        self._describe(
+            self.cookies_combo, "Signed-in browser",
+            "The browser Elisium reads cookies from when a site needs a sign-in, "
+            "such as Instagram stories. Choose Not signed in to turn this off.",
+        )
+        form.addRow(self._label("Browser", self.cookies_combo), self.cookies_combo)
+
+        self.cookies_file_edit = QLineEdit()
+        self.cookies_file_edit.setReadOnly(True)
+        self.cookies_file_edit.setPlaceholderText("No file chosen")
+        self._describe(
+            self.cookies_file_edit, "cookies.txt file",
+            "An optional cookies.txt file exported from a browser.",
+        )
+        self.cookies_choose_button = QPushButton("Choose...")
+        self._describe(
+            self.cookies_choose_button, "Choose cookies.txt file",
+            "Pick a cookies.txt file to use instead of the browser.",
+        )
+        self.cookies_clear_button = QPushButton("Clear")
+        self._describe(
+            self.cookies_clear_button, "Clear cookies.txt file",
+            "Stop using the cookies.txt file.",
+        )
+        file_row = QHBoxLayout()
+        file_row.setSpacing(12)
+        file_row.addWidget(self.cookies_file_edit, 1)
+        file_row.addWidget(self.cookies_choose_button)
+        file_row.addWidget(self.cookies_clear_button)
+        form.addRow(self._label("cookies.txt file", self.cookies_choose_button), file_row)
+
+        self.cookies_help = _WrapLabel(
+            "Needed for Instagram stories and private posts. "
+            "Elisium only reads cookies for the site you download from."
+        )
+        self.cookies_help.setWordWrap(True)
+        self._describe(
+            self.cookies_help, "About signing in",
+            "Why Elisium asks for a browser or a cookies.txt file.",
+        )
+        form.addRow("", self.cookies_help)
+
         form = card("Notifications and tray")
         self.notify_check = QCheckBox("Notify when a download finishes")
         self._describe(self.notify_check, "Notify when a download finishes",
@@ -245,19 +306,25 @@ class SettingsPage(QWidget):
         for signal in (
             self.concurrency_spin.valueChanged, self.limit_check.toggled,
             self.limit_spin.valueChanged, self.limit_unit.currentIndexChanged,
-            self.preset_combo.currentIndexChanged, self.notify_check.toggled,
+            self.preset_combo.currentIndexChanged, self.cookies_combo.currentIndexChanged,
+            self.notify_check.toggled,
             self.tray_check.toggled, self.appearance_combo.currentIndexChanged,
             self.motion_check.toggled,
         ):
             signal.connect(self._changed)
         self.open_folder_button.clicked.connect(self.open_download_folder)
         self.open_data_button.clicked.connect(self.open_data_folder)
+        self.cookies_choose_button.clicked.connect(self.choose_cookies_file)
+        self.cookies_clear_button.clicked.connect(self.clear_cookies_file)
 
         self.setTabOrder(self.concurrency_spin, self.limit_check)
         self.setTabOrder(self.limit_check, self.limit_spin)
         self.setTabOrder(self.limit_spin, self.limit_unit)
         self.setTabOrder(self.limit_unit, self.preset_combo)
-        self.setTabOrder(self.preset_combo, self.notify_check)
+        self.setTabOrder(self.preset_combo, self.cookies_combo)
+        self.setTabOrder(self.cookies_combo, self.cookies_choose_button)
+        self.setTabOrder(self.cookies_choose_button, self.cookies_clear_button)
+        self.setTabOrder(self.cookies_clear_button, self.notify_check)
         self.setTabOrder(self.notify_check, self.tray_check)
         self.setTabOrder(self.tray_check, self.appearance_combo)
         self.setTabOrder(self.appearance_combo, self.motion_check)
@@ -311,6 +378,9 @@ class SettingsPage(QWidget):
             self.limit_spin.setValue(number)
             self.limit_unit.setCurrentIndex(0 if unit == "K" else 1)
         self.preset_combo.setCurrentIndex(max(0, self.preset_combo.findData(s.preset_id)))
+        self.cookies_combo.setCurrentIndex(max(0, self.cookies_combo.findData(s.cookies_browser)))
+        self.cookies_file_edit.setText(s.cookies_file or "")
+        self.cookies_file_edit.setToolTip(s.cookies_file or "")
         self.notify_check.setChecked(s.notify_on_done)
         self.tray_check.setChecked(s.close_to_tray)
         self.appearance_combo.setCurrentIndex(max(0, self.appearance_combo.findData(s.appearance)))
@@ -338,6 +408,8 @@ class SettingsPage(QWidget):
             close_to_tray=self.tray_check.isChecked(),
             appearance=self.appearance_combo.currentData(),
             reduce_motion=self.motion_check.isChecked(),
+            cookies_browser=self.cookies_combo.currentData(),
+            cookies_file=self.cookies_file_edit.text().strip() or None,
         )
         if self.path is not None:
             try:
@@ -346,6 +418,37 @@ class SettingsPage(QWidget):
                 pass
         settings_mod.apply(self.settings, self.queue)
         self.settingsChanged.emit(self.settings)
+
+    # -- accounts --------------------------------------------------------
+    def choose_cookies_file(self) -> None:
+        """Ask for a ``cookies.txt`` file and use it (never opened by us)."""
+        start = self.cookies_file_edit.text().strip() or str(Path.home())
+        chosen, _filter = QFileDialog.getOpenFileName(
+            self,
+            "Choose cookies.txt",
+            start,
+            "Cookies files (cookies.txt *.txt);;All files (*)",
+        )
+        if chosen:
+            self.cookies_file_edit.setText(chosen)
+            self.cookies_file_edit.setToolTip(chosen)
+            self._changed()
+
+    def clear_cookies_file(self) -> None:
+        """Stop using a ``cookies.txt`` file."""
+        if self.cookies_file_edit.text():
+            self.cookies_file_edit.clear()
+            self.cookies_file_edit.setToolTip("")
+            self._changed()
+
+    def show_accounts(self) -> None:
+        """Scroll the Accounts section into view and focus the browser dropdown.
+
+        This is where the sign-in error's suggested action leads: the user
+        picks the browser they are signed in to, or a ``cookies.txt`` file.
+        """
+        self._scroll.ensureWidgetVisible(self.cookies_combo, 0, 24)
+        self.cookies_combo.setFocus(Qt.FocusReason.OtherFocusReason)
 
     # -- yt-dlp version --------------------------------------------------
     def _start_version_check(self) -> None:

@@ -92,3 +92,76 @@ def test_invalid_input_raises_value_error(url: str) -> None:
         normalize_url(url)
     with pytest.raises(ValueError):
         video_key(url)
+
+
+# -- brief 8A: Instagram and TikTok --------------------------------------
+IG_SHORTCODE = "CabcdEFghij"
+TIKTOK_ID = "7106594312292453675"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        f"https://www.instagram.com/p/{IG_SHORTCODE}/",
+        f"https://instagram.com/p/{IG_SHORTCODE}/?igsh=abc123",
+        f"https://m.instagram.com/p/{IG_SHORTCODE}/?igshid=xyz&utm_source=ig_web",
+        f"https://www.instagram.com/p/{IG_SHORTCODE}/?igsh=abc&igshid=def",
+    ],
+)
+def test_instagram_post_forms_share_one_key(url: str) -> None:
+    assert video_key(url) == f"instagram:{IG_SHORTCODE}"
+    assert normalize_url(url) == f"https://instagram.com/p/{IG_SHORTCODE}/"
+
+
+def test_instagram_reel_and_tv_get_keys() -> None:
+    for path in ("reel", "tv"):
+        url = f"https://www.instagram.com/{path}/{IG_SHORTCODE}/"
+        assert video_key(url) == f"instagram:{IG_SHORTCODE}"
+    assert normalize_url(f"https://www.instagram.com/reel/{IG_SHORTCODE}/?igsh=x") == (
+        f"https://instagram.com/reel/{IG_SHORTCODE}/"
+    )
+
+
+def test_instagram_img_index_is_kept() -> None:
+    assert (
+        normalize_url(f"https://www.instagram.com/p/{IG_SHORTCODE}/?img_index=2&igsh=x")
+        == f"https://instagram.com/p/{IG_SHORTCODE}/?img_index=2"
+    )
+
+
+def test_instagram_story_key_needs_an_id() -> None:
+    url = "https://www.instagram.com/stories/tiktok/3211234567890123456/"
+    assert video_key(url) == "instagram:story:tiktok:3211234567890123456"
+    assert video_key("https://www.instagram.com/stories/tiktok/") is None
+    assert video_key("https://www.instagram.com/stories/highlights/17912345678901234/") is None
+
+
+def test_instagram_profile_has_no_key() -> None:
+    assert video_key("https://www.instagram.com/tiktok/") is None
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        f"https://www.tiktok.com/@tiktok/video/{TIKTOK_ID}",
+        f"https://m.tiktok.com/@tiktok/video/{TIKTOK_ID}?is_from_webapp=1&sender_device=pc",
+        f"https://www.tiktok.com/@tiktok/video/{TIKTOK_ID}?_t=8abc&_r=1"
+        "&share_app_id=1340&share_link_id=x&share_item_id=y&u_code=z&timestamp=1"
+        "&user_id=9&tt_from=copy&source=h5_m&lang=en&region=GB&checksum=q"
+        "&refer=web&sender_web_id=w&utm_source=copy",
+    ],
+)
+def test_tiktok_forms_share_one_key(url: str) -> None:
+    assert video_key(url) == f"tiktok:{TIKTOK_ID}"
+    assert normalize_url(url) == f"https://tiktok.com/@tiktok/video/{TIKTOK_ID}"
+
+
+def test_tiktok_short_link_has_no_key_but_loses_junk() -> None:
+    url = "https://vm.tiktok.com/ZMabc123/?_t=1&share_app_id=1340"
+    assert video_key(url) is None
+    assert normalize_url(url) == "https://vm.tiktok.com/ZMabc123/"
+
+
+def test_youtube_behaviour_is_unchanged_next_to_the_new_sites() -> None:
+    assert video_key(f"https://youtu.be/{VIDEO_ID}") == f"youtube:{VIDEO_ID}"
+    assert normalize_url(f"https://youtu.be/{VIDEO_ID}") == CANONICAL

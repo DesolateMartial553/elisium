@@ -49,6 +49,8 @@ fun buildDownloadArgs(request: DownloadRequest): List<String> {
     if (!request.limitRate.isNullOrEmpty()) {
         args += listOf("--limit-rate", request.limitRate)
     }
+    // Only the file path goes on the command line; the app never reads or logs its contents.
+    request.cookiesFile?.let { args += listOf("--cookies", it.path) }
     args += request.extraArgs
     return args
 }
@@ -57,8 +59,50 @@ fun buildDownloadArgs(request: DownloadRequest): List<String> {
 fun buildDownloadArgv(request: DownloadRequest): List<String> = buildDownloadArgs(request) + request.url
 
 /** The yt-dlp arguments for a probe (`-J`), without the URL. */
-fun buildProbeArgs(url: String): List<String> =
-    listOf("-J", "--no-download", if (looksLikePlaylist(url)) "--flat-playlist" else "--no-playlist")
+fun buildProbeArgs(url: String, cookiesFile: File? = null): List<String> {
+    val args = mutableListOf("-J", "--no-download", if (looksLikePlaylist(url)) "--flat-playlist" else "--no-playlist")
+    cookiesFile?.let { args += listOf("--cookies", it.path) }
+    return args
+}
+
+private const val INSTAGRAM_HOST = "instagram.com"
+
+/** The lower-case host of [url] without `www.` / `m.`, else "". */
+private fun bareHostOf(url: String): String {
+    val text = url.trim()
+    val schemeEnd = text.indexOf("://")
+    if (schemeEnd < 0) return ""
+    var authority = text.substring(schemeEnd + 3)
+        .substringBefore('/')
+        .substringBefore('?')
+        .substringBefore('#')
+    authority = authority.substringAfterLast('@').substringBefore(':')
+    var host = authority.lowercase().trimEnd('.')
+    for (prefix in listOf("www.", "m.")) {
+        if (host.startsWith(prefix)) host = host.substring(prefix.length)
+    }
+    return host
+}
+
+/**
+ * True for `instagram.com/stories/<user>/` and `/stories/highlights/<id>`: the whole story
+ * tray is a playlist. A story URL with its own numeric id (`/stories/<user>/<id>`) is one item.
+ */
+private fun isInstagramStoryTray(url: String): Boolean {
+    if (bareHostOf(url) != INSTAGRAM_HOST) return false
+    val text = url.trim().substringBefore('#').substringBefore('?')
+    val schemeEnd = text.indexOf("://")
+    val path = if (schemeEnd >= 0) {
+        val afterAuthority = text.indexOf('/', schemeEnd + 3)
+        if (afterAuthority >= 0) text.substring(afterAuthority) else ""
+    } else {
+        text
+    }
+    val segments = path.split('/').filter { it.isNotEmpty() }
+    if (segments.isEmpty() || segments[0] != "stories") return false
+    if (segments.size == 2 && segments[1] != "highlights") return true
+    return segments.size == 3 && segments[1] == "highlights"
+}
 
 private fun decode(text: String): String = try {
     URLDecoder.decode(text, "UTF-8")
@@ -92,6 +136,7 @@ fun looksLikePlaylist(url: String): Boolean {
         params[key] = value
     }
     if (!params["list"].isNullOrEmpty() && params["v"].isNullOrEmpty()) return true
+    if (isInstagramStoryTray(url)) return true
     return segments.isNotEmpty() && segments[0] == "playlist"
 }
 

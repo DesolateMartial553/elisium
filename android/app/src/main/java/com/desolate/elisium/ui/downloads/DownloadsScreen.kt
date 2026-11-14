@@ -54,7 +54,13 @@ import com.desolate.elisium.ui.theme.NumericStyle
 import kotlinx.coroutines.launch
 
 @Composable
-fun DownloadsScreen(vm: QueueViewModel, input: String, onInputChange: (String) -> Unit, modifier: Modifier = Modifier) {
+fun DownloadsScreen(
+    vm: QueueViewModel,
+    input: String,
+    onInputChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    onSignIn: () -> Unit = {},
+) {
     val rows by vm.rows.collectAsStateWithLifecycle()
     val banner by vm.banner.collectAsStateWithLifecycle()
     val announcement by vm.announcement.collectAsStateWithLifecycle()
@@ -107,6 +113,7 @@ fun DownloadsScreen(vm: QueueViewModel, input: String, onInputChange: (String) -
                 onResume = { vm.resume(row.id) },
                 onCancel = { vm.requestCancel(row.id) },
                 onRetry = { vm.retry(row.id) },
+                onSignIn = onSignIn,
             )
         }
     }
@@ -176,6 +183,7 @@ fun QueueRow(
     onCancel: () -> Unit,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
+    onSignIn: () -> Unit = {},
 ) {
     val stateWord = stringResource(stateLabelRes(row.state))
     val showPercent = row.percent != null && (row.state == "paused" || row.showProgress)
@@ -227,6 +235,7 @@ fun QueueRow(
                         RowAction.Resume -> Triple(R.string.action_resume, R.string.action_resume_for, onResume)
                         RowAction.Cancel -> Triple(R.string.action_cancel, R.string.action_cancel_for, onCancel)
                         RowAction.Retry -> Triple(R.string.action_retry, R.string.action_retry_for, onRetry)
+                        RowAction.SignIn -> Triple(R.string.action_sign_in, R.string.action_sign_in_for, onSignIn)
                     }
                     ElisiumOutlinedButton(
                         text = stringResource(label),
@@ -251,6 +260,7 @@ private fun previewRow(state: String, percent: Int? = null) = QueueRowModel(
     etaSpoken = "40 seconds left",
     errorMessage = if (state == "failed") "Network problem." else null,
     errorFix = if (state == "failed") "Retry (auto-retry already ran)" else null,
+    needsSignIn = false,
     actions = validActions(state),
 )
 

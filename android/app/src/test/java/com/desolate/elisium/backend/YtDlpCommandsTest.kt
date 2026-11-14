@@ -13,6 +13,7 @@ private fun request(
     limitRate: String? = null,
     extra: List<String> = emptyList(),
     selector: String = "bestvideo*+bestaudio/best",
+    cookies: File? = null,
 ) = DownloadRequest(
     url = "https://youtu.be/dQw4w9WgXcQ",
     formatSelector = selector,
@@ -21,6 +22,7 @@ private fun request(
     archiveFile = File("/data/archive.txt"),
     stagingDir = File("/data/staging"),
     processId = "item-7",
+    cookiesFile = cookies,
 )
 
 class YtDlpCommandsTest {
@@ -206,5 +208,61 @@ class YtDlpCommandsTest {
     @Test
     fun failedRunNeverCountsAsArchived() {
         assertFalse(interpretOutcome(1, "has already been recorded in the archive", null, false).alreadyArchived)
+    }
+
+    // -- cookies and stories (brief 8B) --------------------------------------------------
+    @Test
+    fun cookiesOnlyWhenTheFileIsGiven() {
+        assertFalse("--cookies" in buildDownloadArgs(request()))
+        val jar = File("/data/cookies/cookies.txt")
+        val args = buildDownloadArgs(request(cookies = jar))
+        assertEquals("/data/cookies/cookies.txt", args[args.indexOf("--cookies") + 1])
+        // After --limit-rate, before the preset's extra args, so yt-dlp sees one coherent option list.
+        val withBoth = buildDownloadArgs(request(limitRate = "2M", extra = listOf("-x"), cookies = jar))
+        assertTrue(withBoth.indexOf("--limit-rate") < withBoth.indexOf("--cookies"))
+        assertTrue(withBoth.indexOf("--cookies") < withBoth.indexOf("-x"))
+    }
+
+    @Test
+    fun probeCarriesTheCookiesFileWithoutReadingIt() {
+        assertEquals(
+            listOf("-J", "--no-download", "--no-playlist", "--cookies", "/data/cookies/cookies.txt"),
+            buildProbeArgs("https://youtu.be/abc", File("/data/cookies/cookies.txt")),
+        )
+        assertEquals(listOf("-J", "--no-download", "--no-playlist"), buildProbeArgs("https://youtu.be/abc"))
+    }
+
+    @Test
+    fun instagramStoryTraysArePlaylists() {
+        assertTrue(looksLikePlaylist("https://www.instagram.com/stories/someone/"))
+        assertTrue(looksLikePlaylist("https://instagram.com/stories/someone"))
+        assertTrue(looksLikePlaylist("https://www.instagram.com/stories/highlights/1791234567890/"))
+        assertTrue(looksLikePlaylist("https://m.instagram.com/stories/someone/?utm_source=x"))
+    }
+
+    @Test
+    fun oneStoryWithItsOwnIdIsASingleItem() {
+        assertFalse(looksLikePlaylist("https://www.instagram.com/stories/someone/3412345678901234567/"))
+        // A highlight tray without its id is not a list either.
+        assertFalse(looksLikePlaylist("https://www.instagram.com/stories/highlights/"))
+        assertFalse(looksLikePlaylist("https://www.instagram.com/stories/someone/highlights/"))
+    }
+
+    @Test
+    fun instagramAndTiktokVideosAreSingleItems() {
+        assertFalse(looksLikePlaylist("https://www.instagram.com/reel/CabcDEF123/"))
+        assertFalse(looksLikePlaylist("https://www.instagram.com/p/CabcDEF123/"))
+        assertFalse(looksLikePlaylist("https://www.tiktok.com/@tiktok/video/7106594312292453675"))
+        assertFalse(looksLikePlaylist("https://vm.tiktok.com/ZMabc123/"))
+        // Another site's /stories/ path is not an Instagram tray.
+        assertFalse(looksLikePlaylist("https://example.com/stories/someone/"))
+    }
+
+    @Test
+    fun storyTraysProbeWithFlatPlaylist() {
+        assertEquals(
+            listOf("-J", "--no-download", "--flat-playlist"),
+            buildProbeArgs("https://www.instagram.com/stories/someone/"),
+        )
     }
 }

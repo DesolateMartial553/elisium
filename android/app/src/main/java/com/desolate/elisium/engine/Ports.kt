@@ -39,6 +39,11 @@ data class DownloadRequest(
     val processId: String,
     /** Best size estimate from the probe (`filesize` / `filesize_approx`), or null when unknown. */
     val expectedBytes: Long? = null,
+    /**
+     * The imported `cookies.txt` to pass as `--cookies`, or null. Only the path is kept: the app
+     * never reads, copies or logs the cookie contents.
+     */
+    val cookiesFile: File? = null,
 )
 
 data class DownloadOutcome(
@@ -60,8 +65,9 @@ interface DownloadHandle {
 }
 
 interface DownloadBackend {
+    /** Probes [url]; [cookiesFile] is passed on when the site needs a signed-in session. */
     @Throws(ProbeFailure::class)
-    suspend fun probe(url: String): ProbeResult
+    suspend fun probe(url: String, cookiesFile: File? = null): ProbeResult
     fun start(request: DownloadRequest, onProgress: (Progress) -> Unit): DownloadHandle
 }
 

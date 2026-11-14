@@ -53,7 +53,7 @@ class ElisiumViewModel(val app: ElisiumApp) : ViewModel() {
         scope = viewModelScope,
         io = Dispatchers.IO,
     )
-    val settings = SettingsViewModel(app.settingsRepository, viewModelScope)
+    val settings = SettingsViewModel(app.settingsRepository, viewModelScope, cookies = app.cookieJar)
 
     private val extraMessages = kotlinx.coroutines.channels.Channel<String>(kotlinx.coroutines.channels.Channel.BUFFERED)
 

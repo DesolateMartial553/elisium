@@ -73,7 +73,7 @@ class YoutubeDlBackendTest {
     @Test
     fun probeParsesTheJsonAndUsesTheProbeArgs() = runBlocking {
         val runner = FakeRunner { _, _ -> RunResult(0, """{"id": "abc", "title": "Hello"}""", "") }
-        val info = backend(runner).probe("https://youtu.be/abc")
+        val info = backend(runner).probe("https://youtu.be/abc", null)
         assertEquals("Hello", info["title"]!!.jsonPrimitive.content)
         assertEquals(listOf("-J", "--no-download", "--no-playlist"), runner.calls.single().args)
         assertEquals("https://youtu.be/abc", runner.calls.single().url)
@@ -83,21 +83,21 @@ class YoutubeDlBackendTest {
     @Test
     fun probeUsesFlatPlaylistForAPlaylistLink() = runBlocking {
         val runner = FakeRunner { _, _ -> RunResult(0, "{}", "") }
-        backend(runner).probe("https://www.youtube.com/playlist?list=PL1")
+        backend(runner).probe("https://www.youtube.com/playlist?list=PL1", null)
         assertTrue("--flat-playlist" in runner.calls.single().args)
     }
 
     @Test
     fun probeToleratesNoiseAroundTheJson() = runBlocking {
         val runner = FakeRunner { _, _ -> RunResult(0, "WARNING: x\n{\"id\": \"a\"}\ntrailing", "") }
-        assertEquals("a", backend(runner).probe("https://x.com/v")["id"]!!.jsonPrimitive.content)
+        assertEquals("a", backend(runner).probe("https://x.com/v", null)["id"]!!.jsonPrimitive.content)
     }
 
     @Test
     fun probeFailureCarriesTheRawText() = runBlocking {
         val runner = FakeRunner { _, _ -> RunResult(1, "", "ERROR: Video unavailable") }
         try {
-            backend(runner).probe("https://x.com/v")
+            backend(runner).probe("https://x.com/v", null)
             fail("expected ProbeFailure")
         } catch (f: ProbeFailure) {
             assertTrue("Video unavailable" in f.raw)
@@ -108,7 +108,7 @@ class YoutubeDlBackendTest {
     fun probeWithUnparsableOutputFails() = runBlocking {
         val runner = FakeRunner { _, _ -> RunResult(0, "not json at all", "warn") }
         try {
-            backend(runner).probe("https://x.com/v")
+            backend(runner).probe("https://x.com/v", null)
             fail("expected ProbeFailure")
         } catch (f: ProbeFailure) {
             assertTrue("not json at all" in f.raw)
@@ -124,7 +124,7 @@ class YoutubeDlBackendTest {
             release.await(5, TimeUnit.SECONDS)
             RunResult(-1, "", "", canceled = true)
         }
-        val job = async(Dispatchers.Default) { backend(runner).probe("https://x.com/v") }
+        val job = async(Dispatchers.Default) { backend(runner).probe("https://x.com/v", null) }
         assertTrue(started.await(5, TimeUnit.SECONDS))
         job.cancel()
         assertTrue("process was not destroyed", runner.destroyLatch.await(5, TimeUnit.SECONDS))
@@ -295,7 +295,7 @@ class YoutubeDlBackendTest {
     fun probeFailureClassifiesFromStderrNotTheTitle() = runBlocking {
         val runner = FakeRunner { _, _ -> RunResult(1, "[info] Connection Lost: Private Video", "ERROR: HTTP Error 429: Too Many Requests") }
         try {
-            backend(runner).probe("https://x.com/v")
+            backend(runner).probe("https://x.com/v", null)
             fail("expected ProbeFailure")
         } catch (f: ProbeFailure) {
             assertEquals("http_429", com.desolate.elisium.engine.explain(f.errorText).code)
