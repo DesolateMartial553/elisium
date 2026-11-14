@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from elisium_downloader.engine.archive import Archive
 from elisium_downloader.engine.history import History
 from elisium_downloader.engine.queue import DownloadQueue
 
+from . import ipc
 from . import settings as settings_mod
 from .main_window import MainWindow
 
@@ -63,11 +65,52 @@ def create_app(
     return app, window, queue
 
 
-def run(argv: Sequence[str] | None = None) -> int:
+def run(
+    argv: Sequence[str] | None = None,
+    *,
+    initial_urls: Sequence[str] | None = None,
+    on_ready: Callable[[dict[str, int], bool], None] | None = None,
+) -> int:
+    """Start the GUI as the single instance.
+
+    If Elisium is already running, hand it *initial_urls* (default: nothing, a
+    silent no-op: Wayland cannot raise the other window) and return 0.
+    ``on_ready(counts, started)`` is told what happened; ``started`` is true
+    when this process became the running instance.
+    """
+    app = QApplication.instance() or QApplication(list(argv if argv is not None else sys.argv))
+    try:
+        server = ipc.acquire_server()
+    except OSError:
+        server = None  # no safe socket location: run without single-instance
+    else:
+        if server is None:
+            reply = None
+            for _attempt in range(30):  # the other instance may still be starting
+                reply = ipc.send_add(list(initial_urls or []))
+                if reply is not None:
+                    break
+                time.sleep(0.1)
+            if reply is None or not reply.get("ok"):
+                print("Elisium is running but did not accept the request", file=sys.stderr)
+                return 1
+            if on_ready is not None:
+                on_ready({k: v for k, v in reply.items() if isinstance(v, int)}, False)
+            return 0
     app, window, queue = create_app(argv)
+    if server is not None:
+        server.set_handler(window.receive_links)
     window.show()
     try:
+        if initial_urls:
+            counts = window.receive_links(list(initial_urls))
+            if on_ready is not None:
+                on_ready(counts, True)
+        elif on_ready is not None:
+            on_ready({}, True)
         return app.exec()
     finally:
+        if server is not None:
+            server.close()
         queue.stop()
         queue.history.close()

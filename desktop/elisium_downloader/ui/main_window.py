@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from PySide6.QtCore import QEvent, QModelIndex, QPoint, QUrl, Qt
+from PySide6.QtCore import QEvent, QModelIndex, QPoint, QTimer, QUrl, Qt
 from PySide6.QtGui import (
     QAccessible,
     QAccessibleAnnouncementEvent,
@@ -310,6 +310,8 @@ class MainWindow(QMainWindow):
         install_accessible_style()
         self.queue = queue
         self._quitting = False
+        self._pending_playlists: list[str] = []
+        self._draining_playlists = False
         self.tray: TrayController | None = None
         self._probe_fn = probe_fn or self._default_probe
         self._thumbnail_fetcher = thumbnail_fetcher
@@ -707,14 +709,14 @@ class MainWindow(QMainWindow):
         """Probe with the queue's own probe function and yt-dlp path."""
         return self.queue.probe(url)
 
-    def add_text(self, text: str) -> None:
-        """Add every link in *text* and report what happened in the status bar.
+    def _queue_links(
+        self, urls: list[str], ignored: int
+    ) -> tuple[int, int, int, list[str]]:
+        """Queue the plain links; return (added, known, ignored, playlist links).
 
-        Plain links are queued at once with the default preset. A link that
-        looks like a playlist or channel is probed and the playlist picker
-        opens instead, so an unknown number of videos is never queued blindly.
+        Playlist and channel links are never queued here; the caller decides
+        when to open the picker for them.
         """
-        urls, ignored = extract_urls(text)
         playlists = [u for u in urls if runner._looks_like_playlist(u)]
         added = 0
         known = 0
@@ -734,25 +736,67 @@ class MainWindow(QMainWindow):
             if not self.model.has_item(snapshot["id"]):
                 self.model.upsert(snapshot)
         self._refresh_ui()
+        return added, known, ignored, playlists
+
+    def _report_added(self, added: int, known: int, ignored: int, playlists: list[str]) -> None:
         if playlists and not (added or known or ignored):
             self.statusBar().showMessage("Checking the playlist...", 5000)
+            return
+        if added == 0 and known == 1 and ignored == 0:
+            message = "That video is already in the list"
         else:
-            if added == 0 and known == 1 and ignored == 0:
-                message = "That video is already in the list"
-            else:
-                parts = []
-                if added or not (known or ignored):
-                    parts.append(f"Added {_links(added)}")
-                if known:
-                    parts.append(f"{known} already in the list")
-                if ignored:
-                    parts.append(f"{ignored} ignored")
-                message = (
-                    ", ".join(parts) if added else "No links added, " + ", ".join(parts)
-                )
-            self.statusBar().showMessage(message, 8000)
+            parts = []
+            if added or not (known or ignored):
+                parts.append(f"Added {_links(added)}")
+            if known:
+                parts.append(f"{known} already in the list")
+            if ignored:
+                parts.append(f"{ignored} ignored")
+            message = ", ".join(parts) if added else "No links added, " + ", ".join(parts)
+        self.statusBar().showMessage(message, 8000)
+
+    def add_text(self, text: str) -> None:
+        """Add every link in *text* and report what happened in the status bar.
+
+        Plain links are queued at once with the default preset. A link that
+        looks like a playlist or channel is probed and the playlist picker
+        opens instead, so an unknown number of videos is never queued blindly.
+        """
+        urls, ignored = extract_urls(text)
+        added, known, ignored, playlists = self._queue_links(urls, ignored)
+        self._report_added(added, known, ignored, playlists)
         for url in playlists:
             self._open_playlist(url)
+
+    def receive_links(self, urls: list[str]) -> dict[str, int]:
+        """Links handed over by another process (``elisium add``, ``elisium://``).
+
+        Always the default preset. Playlist links open the picker (after the
+        reply has gone out) instead of being queued. Never raises or focuses
+        the window; the user is told by the status bar and a notification.
+        """
+        added, known, ignored, playlists = self._queue_links(list(urls), 0)
+        self._report_added(added, known, ignored, playlists)
+        if added and self.tray is not None:
+            self.tray.notify_added(added)
+        if playlists:
+            self._pending_playlists.extend(playlists)
+            QTimer.singleShot(0, self._drain_playlists)
+        result = {"added": added, "known": known, "ignored": ignored}
+        if playlists:
+            result["playlists"] = len(playlists)
+        return result
+
+    def _drain_playlists(self) -> None:
+        """Open the playlist pickers one after another (a picker is modal)."""
+        if self._draining_playlists:
+            return
+        self._draining_playlists = True
+        try:
+            while self._pending_playlists:
+                self._open_playlist(self._pending_playlists.pop(0))
+        finally:
+            self._draining_playlists = False
 
     # -- choose quality / playlist dialogs -------------------------------
     def _default_preset_id(self) -> str:

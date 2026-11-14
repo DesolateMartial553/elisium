@@ -20,7 +20,8 @@ Workflow: OpenCode implements one brief from `briefs/`; Claude audits the diff a
 - ANDROID 5B DONE: Kotlin engine port (UrlNorm, Errors, Presets, Formats, Archive, ProgressParser, DownloadQueue + Ports interfaces) 121 JVM tests pass (audited: rerun by Claude). Sonnet subagent. Deviations accepted: queue calls OutputStore.publish (publish_failed error), existsAt added, skipped carries "Already downloaded.".
 - ANDROID 5C DONE 2026-11-14: backend, MediaStore output, Room history, DataStore settings, dataSync foreground service, Wi-Fi gate, share intake. Sonnet subagent, cut off before verifying; Claude fixed 4 issues (see briefs/phase5-c-android-backend.result.md). 220 JVM tests, lint clean, debug APK builds. Device behaviour UNVERIFIED.
 - ANDROID 5D DONE 2026-11-14: Compose shell (Downloads/History/Settings), permissions, FileProvider for Open; Sonnet subagent. Claude reran: 273 JVM tests pass, lint 0 errors, APK 73.9 MB. Look, TalkBack, and all behaviour UNVERIFIED on a device (see briefs/phase5-d-android-screens.result.md).
-- Next: (5D done), 5E a11y + signed release; desktop Phase 3 (elisium:// handler, CLI add, browser ext), Phase 4 packaging, Phase 5 Android.
+- DESKTOP 3A DONE 2026-11-14: single instance (QLocalServer, flock-guarded), `elisium add URL|-`, `elisium://add?url=` handler, http/https-only validation, default preset only. Sonnet subagent; Claude reran 446 tests pass, read ipc.py validation. Real browser click / Hyprland / dunst UNVERIFIED.
+- Next: browser extension (3B), then Android 5E after phone test, 5E a11y + signed release; desktop Phase 3 (elisium:// handler, CLI add, browser ext), Phase 4 packaging, Phase 5 Android.
 
 ## Log
 | Brief | Implemented by | Audit | Notes |
@@ -32,6 +33,7 @@ Workflow: OpenCode implements one brief from `briefs/`; Claude audits the diff a
 | 2B | OpenCode (presets.py only, then limit) + Sonnet subagent | Claude: pass | 252 tests; screenshots reviewed |
 | 2C | Sonnet subagent | Claude: pass | 321 tests; screenshots reviewed |
 | 2D | Sonnet subagent | Claude: pass | 391 tests; Orca/tray/dunst untested |
+| 3A | Sonnet subagent | Claude: pass (446 tests, e2e by agent in temp XDG) | handler registration done by Claude |
 | 5D | Sonnet subagent | Claude: pass (reran all 3 gradle tasks) | 273 JVM tests, lint 0 errors; device untested |
 | 5C | Sonnet subagent (cut off) | Claude: pass after 4 fixes | 220 JVM tests, lint clean, APK builds; device untested |
 |---|---|---|---|

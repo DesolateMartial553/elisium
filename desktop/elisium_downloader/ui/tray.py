@@ -180,6 +180,15 @@ class TrayController(QObject):
             why = error.get("message") or "Download failed."
             self._enqueue("failed", f"Download failed: {name}. {why}", folder)
 
+    def notify_added(self, count: int) -> None:
+        """Tell the user links arrived from outside (``elisium add``, a link)."""
+        if count <= 0 or not self.window.settings.notify_on_done:
+            return
+        message = "Added 1 link" if count == 1 else f"Added {count} links"
+        self._last_folder = None
+        self.sent.append(("Elisium", message))
+        self._notifier("Elisium", message)
+
     def _enqueue(self, kind: str, text: str, folder: Path | None) -> None:
         self._pending.append((kind, text, folder))
         wait = MIN_NOTIFY_GAP - (self._clock() - self._last_sent)
