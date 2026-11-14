@@ -32,9 +32,13 @@ fun extractUrls(text: String?): List<String> {
 }
 
 /** The one-line confirmation shown after a share: "Added 1 link", "Added 2 links (1 already in the list)". */
-fun shareConfirmation(added: Int, alreadyQueued: Int, found: Int): String {
+fun shareConfirmation(added: Int, alreadyQueued: Int, found: Int, retried: Int = 0): String {
     if (found == 0) return "No links found in the shared text"
     val links = if (added == 1) "link" else "links"
-    val base = "Added $added $links"
-    return if (alreadyQueued > 0) "$base ($alreadyQueued already in the list)" else base
+    val head = when {
+        retried == 0 -> "Added $added $links"
+        added == 0 -> "$retried ${if (retried == 1) "link" else "links"} queued again"
+        else -> "Added $added $links, $retried queued again"
+    }
+    return if (alreadyQueued > 0) "$head ($alreadyQueued already in the list)" else head
 }

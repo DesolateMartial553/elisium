@@ -277,4 +277,41 @@ class YoutubeDlBackendTest {
         assertTrue("No space left on device" in outcome.rawLog)
         assertTrue(runner.calls.isEmpty())
     }
+
+    // -- brief 7A --------------------------------------------------------
+    @Test
+    fun aTitleOnStdoutDoesNotDecideTheErrorClass() = runBlocking {
+        val runner = FakeRunner { _, onLine ->
+            onLine("[download] Destination: Connection Lost - Private Video Tour [abc].mp4")
+            RunResult(1, "", "ERROR: Requested format is not available")
+        }
+        val outcome = backend(runner).start(request(File(tmp.root, "s"))) { }.await()
+        assertEquals("format_unavailable", com.desolate.elisium.engine.explain(outcome.errorLog).code)
+        // The full log (for the Details view) still has the title.
+        assertTrue("Connection Lost" in outcome.rawLog)
+    }
+
+    @Test
+    fun probeFailureClassifiesFromStderrNotTheTitle() = runBlocking {
+        val runner = FakeRunner { _, _ -> RunResult(1, "[info] Connection Lost: Private Video", "ERROR: HTTP Error 429: Too Many Requests") }
+        try {
+            backend(runner).probe("https://x.com/v")
+            fail("expected ProbeFailure")
+        } catch (f: ProbeFailure) {
+            assertEquals("http_429", com.desolate.elisium.engine.explain(f.errorText).code)
+        }
+    }
+
+    @Test
+    fun knownSizeNeedsTwiceTheSpace() = runBlocking {
+        val runner = FakeRunner { _, _ -> RunResult(0, "", "") }
+        // 300 MB free: fine for an unknown size (200 MB floor) but not for a 200 MB file (needs 2x + 50 MB).
+        val mb = 1024L * 1024
+        val roomy = backend(runner, 300 * mb).start(request(File(tmp.root, "s1"))) { }.await()
+        assertEquals(0, roomy.exitCode)
+        val tight = backend(runner, 300 * mb).start(request(File(tmp.root, "s2")).copy(expectedBytes = 200 * mb)) { }.await()
+        assertEquals(1, tight.exitCode)
+        assertTrue("No space left" in tight.rawLog)
+        assertEquals(1, runner.calls.size) // the tight one never reached yt-dlp
+    }
 }

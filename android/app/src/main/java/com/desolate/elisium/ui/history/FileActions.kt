@@ -20,7 +20,7 @@ fun openFile(context: Context, location: String): Boolean {
     try {
         if (location.startsWith("content://")) {
             uri = Uri.parse(location)
-            mime = context.contentResolver.getType(uri) ?: "*/*"
+            mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
         } else {
             uri = FileProvider.getUriForFile(context, fileProviderAuthority(context), File(location))
             mime = mimeForName(location)

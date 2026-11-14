@@ -2,12 +2,16 @@ package com.desolate.elisium.engine
 
 import java.io.File
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /** The parsed `yt-dlp -J` object. */
 typealias ProbeResult = JsonObject
 
 /** Thrown by [DownloadBackend.probe] when yt-dlp fails; [raw] is its output. */
-class ProbeFailure(val raw: String) : Exception("probe failed")
+class ProbeFailure(val raw: String, val errorText: String = raw) : Exception("probe failed")
+
+/** Thrown by an [OutputStore] when Android denies the permission needed to save into the public folder (API 26-28). */
+class StoragePermissionException : Exception("storage permission denied")
 
 /** One progress report from a running download. */
 data class Progress(
@@ -33,6 +37,8 @@ data class DownloadRequest(
     val stagingDir: File,
     /** Unique per queue item, so a backend can find and stop the right process. */
     val processId: String,
+    /** Best size estimate from the probe (`filesize` / `filesize_approx`), or null when unknown. */
+    val expectedBytes: Long? = null,
 )
 
 data class DownloadOutcome(
@@ -44,6 +50,8 @@ data class DownloadOutcome(
     val alreadyArchived: Boolean = false,
     /** The process was stopped by [DownloadHandle.cancel]. */
     val terminated: Boolean = false,
+    /** What error classification reads: stderr and `ERROR:`/`WARNING:` lines, never titles printed on stdout. */
+    val errorLog: String = rawLog,
 )
 
 interface DownloadHandle {
@@ -69,6 +77,9 @@ interface OutputStore {
 
     /** Moves the finished file to its final place; null on failure. */
     suspend fun publish(stagedFile: File, displayName: String): PublishedFile?
+
+    /** Deletes a file this store published (used when the item was cancelled during the copy). False when unsupported. */
+    fun delete(location: String): Boolean = false
 
     /** Forget any bookkeeping for a video whose file was deleted. */
     fun forget(extractorKey: String, videoId: String)
@@ -113,4 +124,14 @@ interface HistoryStore {
     fun search(text: String, limit: Int? = 200): List<HistoryRecord>
     fun recent(limit: Int = 50): List<HistoryRecord>
     fun delete(recordId: Long): Boolean
+}
+
+/** Best size estimate (bytes) from a probe object: `filesize`, else `filesize_approx`. */
+fun expectedBytesFrom(info: JsonObject): Long? {
+    for (key in listOf("filesize", "filesize_approx")) {
+        val el = info[key] as? JsonPrimitive ?: continue
+        val v = el.content.toDoubleOrNull() ?: continue
+        if (v > 0) return v.toLong()
+    }
+    return null
 }

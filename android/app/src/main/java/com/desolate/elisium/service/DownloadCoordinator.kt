@@ -58,6 +58,7 @@ class DownloadCoordinator(
     private var notifyOnDone = true
     private var hasNetwork = false
     private var unmetered = false
+    private var currentNetwork: Network? = null
 
     fun start() {
         scope.launch(start = CoroutineStart.UNDISPATCHED) { queue.events.collect { batch.onEvent(it) } }
@@ -100,18 +101,23 @@ class DownloadCoordinator(
         val caps = active?.let { connectivity.getNetworkCapabilities(it) }
         synchronized(netLock) {
             hasNetwork = caps != null
+            currentNetwork = if (caps != null) active else null
             unmetered = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) == true
         }
         reevaluate()
         connectivity.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                synchronized(netLock) { hasNetwork = true }
+                synchronized(netLock) {
+                    hasNetwork = true
+                    currentNetwork = network
+                }
                 reevaluate()
             }
 
             override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
                 synchronized(netLock) {
                     hasNetwork = true
+                    currentNetwork = network
                     unmetered = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
                 }
                 reevaluate()
@@ -119,8 +125,11 @@ class DownloadCoordinator(
 
             override fun onLost(network: Network) {
                 synchronized(netLock) {
+                    // A late "lost" for the previous network must not hide the one we already switched to.
+                    if (currentNetwork != null && currentNetwork != network) return
                     hasNetwork = false
                     unmetered = false
+                    currentNetwork = null
                 }
                 reevaluate()
             }

@@ -18,10 +18,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboard
@@ -56,12 +54,11 @@ import com.desolate.elisium.ui.theme.NumericStyle
 import kotlinx.coroutines.launch
 
 @Composable
-fun DownloadsScreen(vm: QueueViewModel, modifier: Modifier = Modifier) {
+fun DownloadsScreen(vm: QueueViewModel, input: String, onInputChange: (String) -> Unit, modifier: Modifier = Modifier) {
     val rows by vm.rows.collectAsStateWithLifecycle()
     val banner by vm.banner.collectAsStateWithLifecycle()
     val announcement by vm.announcement.collectAsStateWithLifecycle()
     val prompt by vm.cancelPrompt.collectAsStateWithLifecycle()
-    var input by rememberSaveable { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboard.current
     val reduced = ElisiumTheme.extras.reducedMotion
@@ -76,13 +73,13 @@ fun DownloadsScreen(vm: QueueViewModel, modifier: Modifier = Modifier) {
         item(key = "add") {
             AddLinkRow(
                 text = input,
-                onTextChange = { input = it },
-                onAdd = { if (vm.addFromText(input)) input = "" },
+                onTextChange = onInputChange,
+                onAdd = { if (vm.addFromText(input)) onInputChange("") },
                 onPaste = {
                     scope.launch {
                         val clip = clipboard.getClipEntry()?.clipData
                         val pasted = if (clip != null && clip.itemCount > 0) clip.getItemAt(0).text?.toString() else null
-                        if (!pasted.isNullOrBlank()) input = pasted
+                        if (!pasted.isNullOrBlank()) onInputChange(pasted)
                     }
                 },
             )

@@ -44,6 +44,10 @@ const val DEFAULT_FORMAT = "bestvideo*+bestaudio/best"
 val ALREADY_DOWNLOADED = ErrorInfo("Already downloaded.", "It is in the download folder", "already_downloaded")
 private val UNKNOWN = ErrorInfo("Download failed.", "See Details", "unknown")
 private val PUBLISH_FAILED = ErrorInfo("Could not save the file.", "Check free storage space", "publish_failed")
+private val STORAGE_PERMISSION = ErrorInfo("Elisium needs storage permission to save files.", "Allow storage access in Settings, then tap Retry", "storage_permission")
+
+/** History id used when the database refused the insert (disk full): the item still runs from memory. */
+private const val NO_RECORD = -1L
 
 private fun checkConcurrency(value: Int): Int {
     require(value in 1..MAX_CONCURRENCY) { "concurrency must be between 1 and $MAX_CONCURRENCY, got $value" }
@@ -108,6 +112,10 @@ private class Entry(
     var archiveKey: String? = null
     var formatSelector: String? = null
     var extraArgs: List<String>? = null
+    var expectedBytes: Long? = null
+
+    /** Identifies the running attempt, so progress from an older, dying process is ignored. */
+    var token: Any? = null
 
     fun snapshot() = QueueItem(
         id, recordId, url, identity, videoKey, state, title, filePath, attempts, error,
@@ -190,7 +198,9 @@ class DownloadQueue(
 
     // -- adding ----------------------------------------------------------
     /**
-     * Queues [url]; a duplicate of an existing item returns that item unchanged.
+     * Queues [url]; a duplicate of an existing item returns that item. A duplicate whose item is
+     * failed or cancelled is retried (queued again, backoff reset); a done or skipped one whose
+     * file is gone downloads again; anything else is left alone.
      * [formatSelector] and [extraArgs] override the queue defaults for this item
      * only (an empty list is a real override); [title] is shown until the probe
      * supplies the real one.
@@ -212,10 +222,18 @@ class DownloadQueue(
             val existing = byIdentity[identity]
             if (existing != null) {
                 val found = entries.getValue(existing)
-                if (found.state in setOf("done", "skipped") && !filePresent(found)) requeueMissing(found)
+                if (found.state in setOf("done", "skipped") && !filePresent(found)) {
+                    requeueMissing(found)
+                } else if (found.state == "failed" || found.state == "cancelled") {
+                    requeueFinished(found) // pasting a failed or cancelled link again means "try again"
+                }
                 return@withLock found.snapshot()
             }
-            val recordId = history.add(clean, videoKey = identity, state = "queued")
+            val recordId = try {
+                history.add(clean, videoKey = identity, state = "queued")
+            } catch (_: Exception) {
+                NO_RECORD // disk full or a broken database must not lose the download
+            }
             val entry = Entry(nextId, recordId, clean, identity, key)
             nextId++
             entry.title = title?.pyStrip()?.ifEmpty { null }
@@ -276,6 +294,14 @@ class DownloadQueue(
         setState(e, "queued", clearError = true)
     }
 
+    /** Puts a failed or cancelled item back in the queue, backoff reset. Caller holds the state lock. */
+    private fun requeueFinished(e: Entry) {
+        e.error = null
+        e.attempts = 0
+        e.percent = null
+        setState(e, "queued", clearError = true)
+    }
+
     // -- user actions ----------------------------------------------------
     /** Pauses one item. A download is cancelled; staged `.part` files stay. */
     fun pause(id: Int): Boolean {
@@ -318,10 +344,7 @@ class DownloadQueue(
         val result = lock.withLock {
             val e = entries[id]
             if (e == null || e.state != "failed" && e.state != "cancelled") return@withLock false
-            e.error = null
-            e.attempts = 0
-            e.percent = null
-            setState(e, "queued", clearError = true)
+            requeueFinished(e)
             true
         }
         schedule()
@@ -330,15 +353,19 @@ class DownloadQueue(
 
     /** Cancels one item; a running download is cancelled. */
     fun cancel(id: Int): Boolean {
+        var leftovers: StageRef? = null
         val result = lock.withLock {
             val e = entries[id]
             if (e == null || e.state in TERMINAL_STATES) return@withLock false
             val handle = e.handle
             e.error = null
+            // A worker that owns the item deletes the files itself once its process is gone.
+            if (!e.owned) leftovers = stageRef(e)
             setState(e, "cancelled", clearError = true)
             handle?.cancel()
             true
         }
+        leftovers?.let { cleanupStaging(it, keepPartial = false) }
         schedule()
         return result
     }
@@ -393,19 +420,37 @@ class DownloadQueue(
         val previous = e.state
         if (previous == state) return
         e.state = state
-        history.updateState(
-            e.recordId,
-            state,
-            errorCode = error?.code,
-            errorMessage = error?.message,
-            filePath = filePath,
-            clearError = clearError,
-        )
+        try {
+            history.updateState(
+                e.recordId,
+                state,
+                errorCode = error?.code,
+                errorMessage = error?.message,
+                filePath = filePath,
+                clearError = clearError,
+            )
+        } catch (_: Exception) {
+            // Disk full or a broken database: the in-memory state stays authoritative.
+        }
         _events.tryEmit(QueueEvent.StateChanged(e.id, state, previous, e.snapshot()))
         publishState()
     }
 
     private fun downloading(): Boolean = entries.values.any { it.state in DOWNLOADING_STATES }
+
+    // -- internals: staging cleanup ----------------------------------------
+    private class StageRef(val processId: String, val videoId: String?)
+
+    /** Caller holds the state lock. */
+    private fun stageRef(e: Entry) =
+        StageRef("item-${e.id}", (e.videoKey ?: e.archiveKey)?.let { splitKey(it)?.second })
+
+    private fun cleanupStaging(ref: StageRef, keepPartial: Boolean) {
+        try {
+            deleteItemLeftovers(stagingDir, ref.processId, ref.videoId, keepPartial)
+        } catch (_: Exception) {
+        }
+    }
 
     // -- internals: scheduling -------------------------------------------
     private fun schedule() {
@@ -471,7 +516,7 @@ class DownloadQueue(
         try {
             info = backend.probe(e.url)
         } catch (f: ProbeFailure) {
-            error = explain(f.raw)
+            error = explain(f.errorText)
         } catch (c: CancellationException) {
             throw c
         } catch (_: Exception) {
@@ -479,6 +524,7 @@ class DownloadQueue(
         }
         if (info != null) {
             learnArchiveKey(e, info)
+            expectedBytesFrom(info)?.let { bytes -> lock.withLock { e.expectedBytes = bytes } }
             val title = titleFrom(info)
             if (title != null) {
                 lock.withLock {
@@ -494,12 +540,15 @@ class DownloadQueue(
                 if (!running || e.state != "probing") return null // paused or cancelled while probing
             }
             if (isArchived(e)) {
+                var leftovers: StageRef? = null
                 lock.withLock {
                     if (e.state == "probing") {
                         e.error = ALREADY_DOWNLOADED
+                        leftovers = stageRef(e)
                         setState(e, "skipped", error = ALREADY_DOWNLOADED)
                     }
                 }
+                leftovers?.let { cleanupStaging(it, keepPartial = false) }
                 return null
             }
             lock.withLock {
@@ -534,19 +583,26 @@ class DownloadQueue(
         return null
     }
 
-    private fun afterFailure(e: Entry, error: ErrorInfo): Long? = lock.withLock {
-        if (!running || e.state in TERMINAL_STATES || e.state == "paused") return@withLock null
-        e.error = error
-        if (error.code in RETRYABLE_CODES && e.attempts < BACKOFF_MS.size) {
-            val wait = BACKOFF_MS[e.attempts]
-            e.attempts++
-            // Back to queued while waiting, but keep the worker slot: the scheduler
-            // only picks items that no worker owns.
-            setState(e, "queued")
-            return@withLock wait
+    private fun afterFailure(e: Entry, error: ErrorInfo): Long? {
+        var leftovers: StageRef? = null
+        val wait = lock.withLock {
+            if (!running || e.state in TERMINAL_STATES || e.state == "paused") return@withLock null
+            e.error = error
+            if (error.code in RETRYABLE_CODES && e.attempts < BACKOFF_MS.size) {
+                val wait = BACKOFF_MS[e.attempts]
+                e.attempts++
+                // Back to queued while waiting, but keep the worker slot: the scheduler
+                // only picks items that no worker owns.
+                setState(e, "queued")
+                return@withLock wait
+            }
+            leftovers = stageRef(e)
+            setState(e, "failed", error = error)
+            null
         }
-        setState(e, "failed", error = error)
-        null
+        // A failed item keeps its .part files only when a retry could continue from them (network errors).
+        leftovers?.let { cleanupStaging(it, keepPartial = error.code in RETRYABLE_CODES) }
+        return wait
     }
 
     /**
@@ -554,7 +610,9 @@ class DownloadQueue(
      * [ErrorInfo] for a real failure.
      */
     private suspend fun download(e: Entry): ErrorInfo? {
+        val token = Any()
         val request = lock.withLock {
+            e.token = token
             DownloadRequest(
                 url = e.url,
                 formatSelector = e.formatSelector ?: formatSelector,
@@ -563,11 +621,12 @@ class DownloadQueue(
                 archiveFile = archive.file,
                 stagingDir = stagingDir,
                 processId = "item-${e.id}",
+                expectedBytes = e.expectedBytes,
             )
         }
         val outcome: DownloadOutcome = try {
             stagingDir.mkdirs()
-            val handle = backend.start(request) { progress -> onProgress(e, progress) }
+            val handle = backend.start(request) { progress -> onProgress(e, token, progress) }
             val stopNow = lock.withLock {
                 e.handle = handle
                 e.state == "paused" || e.state == "cancelled"
@@ -584,14 +643,32 @@ class DownloadQueue(
         } catch (_: Exception) {
             lock.withLock {
                 e.handle = null
+                e.token = null
                 if (e.state == "paused" || e.state == "cancelled") return null
             }
             return UNKNOWN
         }
 
-        lock.withLock {
+        // 0 = carry on, 1 = leave it (paused, or already re-queued by a quick resume), 2 = cancelled.
+        var ref: StageRef? = null
+        val verdict = lock.withLock {
             e.handle = null
-            if (e.state == "paused" || e.state == "cancelled") return null
+            e.token = null
+            ref = stageRef(e)
+            when {
+                e.state == "cancelled" -> 2
+                e.state == "paused" -> 1
+                // Only DownloadHandle.cancel() sets `terminated`. If the item is back to queued it was resumed
+                // before this worker woke: the old process is dead, so this worker steps aside and the scheduler
+                // starts a fresh attempt. (Terminated in any other state is a real failure and falls through.)
+                outcome.terminated && e.state == "queued" -> 1
+                else -> 0
+            }
+        }
+        if (verdict != 0) {
+            // A cancelled item must not leave its finished file or partial files behind; a paused one keeps them.
+            if (verdict == 2) ref?.let { cleanupStaging(it, keepPartial = false) }
+            return null
         }
 
         if (outcome.exitCode == 0 && !outcome.terminated) {
@@ -604,6 +681,7 @@ class DownloadQueue(
                         setState(e, "skipped", error = ALREADY_DOWNLOADED)
                     }
                 }
+                ref?.let { cleanupStaging(it, keepPartial = false) }
                 return null
             }
             var finalPath: String? = null
@@ -613,14 +691,27 @@ class DownloadQueue(
                     outputStore.publish(staged, staged.name)
                 } catch (c: CancellationException) {
                     throw c
+                } catch (_: StoragePermissionException) {
+                    return STORAGE_PERMISSION
                 } catch (_: Exception) {
                     null
                 }
                 if (published == null) return PUBLISH_FAILED
                 finalPath = published.location
+                // The copy can take many seconds: cancel/pause may have happened meanwhile.
+                val cancelledMeanwhile = lock.withLock { e.state == "cancelled" }
+                if (cancelledMeanwhile) {
+                    try {
+                        outputStore.delete(published.location)
+                    } catch (_: Exception) {
+                    }
+                    ref?.let { cleanupStaging(it, keepPartial = false) }
+                    return null
+                }
             }
             lock.withLock {
-                if (e.state in DOWNLOADING_STATES) {
+                // Still downloading, or paused/re-queued during the copy: the file is saved, so the item is done.
+                if (e.state !in TERMINAL_STATES) {
                     e.filePath = finalPath
                     e.percent = 100.0
                     e.error = null
@@ -629,12 +720,13 @@ class DownloadQueue(
             }
             return null
         }
-        return explain(outcome.rawLog)
+        return explain(outcome.errorLog)
     }
 
-    private fun onProgress(e: Entry, p: Progress) {
+    private fun onProgress(e: Entry, token: Any, p: Progress) {
         lock.withLock {
-            if (e.state in TERMINAL_STATES || e.state == "paused") return
+            // A stale token is a dying process from before a pause; "queued" means a quick resume or a retry wait.
+            if (e.token !== token || e.state in TERMINAL_STATES || e.state == "paused" || e.state == "queued") return
             val housekeeping = p.postprocessor != null && p.stage == "downloading"
             if (p.stage in STAGES && e.state != p.stage && !housekeeping) setState(e, p.stage)
             e.stage = p.stage

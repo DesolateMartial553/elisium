@@ -49,7 +49,7 @@
     <string name="cancel_confirm">Stop it</string>
     <string name="cancel_keep">Keep downloading</string>
     <string name="banner_wifi_title">Waiting for Wi-Fi</string>
-    <string name="banner_wifi_body">Downloads will start when you connect to Wi-Fi. To use mobile data instead, turn off Wi-Fi only in Settings.</string>
+    <string name="banner_wifi_body">Downloads will start when you connect to a Wi-Fi network that is not metered. A hotspot or a Wi-Fi marked as metered counts as mobile data. To download anyway, turn off Wi-Fi only in Settings.</string>
     <string name="banner_service_title">Downloads may stop if you leave the app</string>
     <string name="banner_service_body">Android would not let Elisium keep running in the background. Keep the app open until the downloads finish. Detail: %1$s</string>
 
@@ -91,7 +91,7 @@
     <string name="settings_speed_invalid">Not saved yet. Use a number with a capital K, M or G, like 2M or 500K, or leave it empty.</string>
     <string name="settings_network">Network and alerts</string>
     <string name="settings_wifi_only">Wi-Fi only</string>
-    <string name="settings_wifi_only_help">Wait for Wi-Fi instead of using mobile data.</string>
+    <string name="settings_wifi_only_help">Wait for an unmetered Wi-Fi network instead of using mobile data or a metered Wi-Fi.</string>
     <string name="settings_notify">Tell me when downloads finish</string>
     <string name="settings_notify_help">Shows one notification when the list is done.</string>
     <string name="settings_notifications_off">Notifications are off for Elisium, so you will not be told when downloads finish. Downloads still work.</string>

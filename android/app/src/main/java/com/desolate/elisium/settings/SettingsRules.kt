@@ -34,7 +34,10 @@ private val LIMIT_RE = Regex("^\\d+(\\.\\d+)?[KMG]?$")
 /** [value] trimmed if it is a valid `--limit-rate` string, else null. */
 fun validSpeedLimit(value: String?): String? {
     val trimmed = value?.trim() ?: return null
-    return if (LIMIT_RE.matches(trimmed)) trimmed else null
+    if (!LIMIT_RE.matches(trimmed)) return null
+    // "0" (or 0.0M) would be stored as a limit of nothing; use a blank field for "no limit".
+    val number = trimmed.trimEnd('K', 'M', 'G').toDoubleOrNull() ?: return null
+    return if (number > 0.0) trimmed else null
 }
 
 fun validConcurrency(value: Int?): Int =

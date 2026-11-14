@@ -70,6 +70,8 @@ private enum class Tab(val titleRes: Int, val icon: ImageVector) {
 fun ElisiumShell(vm: ElisiumViewModel, engine: EngineState) {
     var tabIndex by rememberSaveable { mutableIntStateOf(0) }
     val tab = Tab.entries[tabIndex]
+    // Lives outside AnimatedContent: the Downloads screen is disposed on a tab switch and would lose a half-typed link.
+    var linkInput by rememberSaveable { mutableStateOf("") }
     val snackbar = remember { SnackbarHostState() }
     val hasUnfinished by vm.queue.hasUnfinished.collectAsStateWithLifecycle()
 
@@ -159,7 +161,7 @@ fun ElisiumShell(vm: ElisiumViewModel, engine: EngineState) {
                 label = "tab",
             ) { current ->
                 when (current) {
-                    Tab.Downloads -> DownloadsScreen(vm.queue, Modifier.fillMaxSize())
+                    Tab.Downloads -> DownloadsScreen(vm.queue, linkInput, { linkInput = it }, Modifier.fillMaxSize())
                     Tab.History -> HistoryScreen(vm.history, showMessage = { vm.postMessage(it) }, modifier = Modifier.fillMaxSize())
                     Tab.Settings -> SettingsScreen(vm.settings, engine, Modifier.fillMaxSize())
                 }

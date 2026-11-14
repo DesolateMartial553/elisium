@@ -1,6 +1,7 @@
 package com.desolate.elisium.backend
 
 import com.desolate.elisium.engine.DownloadRequest
+import com.desolate.elisium.engine.expectedBytesFrom
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -35,6 +36,7 @@ class YtDlpCommandsTest {
                 "--no-mtime",
                 "-o", "%(title).150B [%(id)s].%(ext)s",
                 "--continue",
+                "--no-playlist",
                 "--newline",
                 "--progress-template", "download:%(progress)j",
                 "--progress-template", "postprocess:%(progress)j",
@@ -46,6 +48,39 @@ class YtDlpCommandsTest {
             ),
             argv,
         )
+    }
+
+    @Test
+    fun everyDownloadPassesNoPlaylist() {
+        // Items reach the queue as single video URLs (Android has no playlist picker), so a watch?v=..&list=.. link
+        // must not pull in the whole playlist. For a real playlist URL the flag changes nothing.
+        assertTrue("--no-playlist" in buildDownloadArgs(request()))
+        assertTrue("--no-playlist" in buildDownloadArgs(request(extra = listOf("-x"))))
+    }
+
+    @Test
+    fun classifiableTextDropsTitlesFromStdout() {
+        val stdout = "[download] Destination: Connection Lost - Private Video Tour [abc].mp4\nERROR: Requested format is not available"
+        val text = classifiableText(stdout, "")
+        assertFalse("Connection Lost" in text)
+        assertTrue("Requested format is not available" in text)
+    }
+
+    @Test
+    fun classifiableTextKeepsStderrAndWarnings() {
+        val text = classifiableText("[info] My Title\nWARNING: slow\n", "ERROR: HTTP Error 403: Forbidden")
+        assertTrue("HTTP Error 403" in text)
+        assertTrue("WARNING: slow" in text)
+        assertFalse("My Title" in text)
+    }
+
+    @Test
+    fun expectedBytesPrefersFilesizeThenApprox() {
+        fun info(s: String) = kotlinx.serialization.json.Json.parseToJsonElement(s) as kotlinx.serialization.json.JsonObject
+        assertEquals(1000L, expectedBytesFrom(info("""{"filesize": 1000, "filesize_approx": 5}""")))
+        assertEquals(5L, expectedBytesFrom(info("""{"filesize": null, "filesize_approx": 5.0}""")))
+        assertNull(expectedBytesFrom(info("""{"filesize": 0}""")))
+        assertNull(expectedBytesFrom(info("{}")))
     }
 
     @Test

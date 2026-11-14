@@ -52,8 +52,9 @@ class YoutubeDlBackend(
         }
         if (result.canceled) throw CancellationException("probe cancelled")
         val raw = result.stdout + result.stderr
-        if (result.exitCode != 0) throw ProbeFailure(raw)
-        extractJsonObject(result.stdout) ?: throw ProbeFailure(raw)
+        val errorText = classifiableText(result.stdout, result.stderr)
+        if (result.exitCode != 0) throw ProbeFailure(raw, errorText)
+        extractJsonObject(result.stdout) ?: throw ProbeFailure(raw, errorText)
     }
 
     override fun start(request: DownloadRequest, onProgress: (Progress) -> Unit): DownloadHandle {
@@ -75,7 +76,7 @@ class YoutubeDlBackend(
 
         fun execute(request: DownloadRequest, onProgress: (Progress) -> Unit): DownloadOutcome {
             if (terminated.get()) return interpretOutcome(-1, "", null, terminated = true)
-            val needed = StorageSpace.requiredFreeBytes(null)
+            val needed = StorageSpace.requiredFreeBytes(request.expectedBytes)
             val free = freeBytes(request.stagingDir)
             if (free < needed) {
                 return interpretOutcome(
@@ -102,7 +103,8 @@ class YoutubeDlBackend(
             val log = synchronized(lines) { lines.toString() } + result.stderr
             val pathText = if (pathFile.exists()) pathFile.readText() else null
             pathFile.delete()
-            return interpretOutcome(result.exitCode, log.trimEnd(), pathText, terminated.get() || result.canceled)
+            val errorLog = classifiableText(synchronized(lines) { lines.toString() }, result.stderr)
+            return interpretOutcome(result.exitCode, log.trimEnd(), pathText, terminated.get() || result.canceled, errorLog)
         }
     }
 }

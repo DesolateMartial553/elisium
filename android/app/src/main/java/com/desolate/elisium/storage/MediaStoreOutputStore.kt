@@ -11,6 +11,10 @@ import android.provider.MediaStore
 import androidx.annotation.RequiresApi
 import com.desolate.elisium.engine.OutputStore
 import com.desolate.elisium.engine.PublishedFile
+import com.desolate.elisium.engine.StoragePermissionException
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -59,10 +63,18 @@ class MediaStoreOutputStore(context: Context) : OutputStore {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) publishModern(stagedFile, name) else publishLegacy(stagedFile, name)
             } catch (c: CancellationException) {
                 throw c
+            } catch (p: StoragePermissionException) {
+                throw p
             } catch (_: Exception) {
                 null
             }
         }
+
+    override fun delete(location: String): Boolean = try {
+        if (location.startsWith("content://")) resolver.delete(Uri.parse(location), null, null) > 0 else File(location).delete()
+    } catch (_: Exception) {
+        false
+    }
 
     @RequiresApi(Build.VERSION_CODES.Q)
     private fun publishModern(staged: File, name: String): PublishedFile? {
@@ -99,6 +111,10 @@ class MediaStoreOutputStore(context: Context) : OutputStore {
     private fun legacyDir(): File = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), FOLDER_NAME)
 
     private fun publishLegacy(staged: File, name: String): PublishedFile? {
+        // API 26-28 needs WRITE_EXTERNAL_STORAGE; without it mkdirs fails and the real cause would be hidden.
+        if (ContextCompat.checkSelfPermission(appContext, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            throw StoragePermissionException()
+        }
         val dir = legacyDir()
         if (!dir.isDirectory && !dir.mkdirs()) return null
         val target = File(dir, name)

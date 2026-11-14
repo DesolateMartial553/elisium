@@ -30,10 +30,14 @@ class DownloadService : Service() {
     private val main = Handler(Looper.getMainLooper())
     private var running = false
 
+    /** Id of the newest start command; [stopSelfResult] with it never drops a start that arrived later. */
+    private var lastStartId = 0
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val app = application as ElisiumApp
+        lastStartId = startId
         Notifications.ensureChannels(this)
         val coordinator = app.coordinator.value
         val items = coordinator?.queue?.items?.value.orEmpty()
@@ -43,12 +47,15 @@ class DownloadService : Service() {
         } catch (e: Exception) {
             // ForegroundServiceStartNotAllowedException (Android 12+) or a missing type permission.
             coordinator?.reportServiceFailure("Download service could not start: ${e.message}")
-            stopSelf()
+            stopSelfResult(startId)
             return START_NOT_STICKY
         }
-        when (intent?.action) {
-            ACTION_PAUSE_ALL -> coordinator?.pauseAll()
-            ACTION_CANCEL_ALL -> coordinator?.cancelAll()
+        // pauseAll/cancelAll write History (Room), which refuses the main thread: hand them to the app scope.
+        val action = intent?.action
+        if (coordinator != null && (action == ACTION_PAUSE_ALL || action == ACTION_CANCEL_ALL)) {
+            app.scope.launch {
+                if (action == ACTION_PAUSE_ALL) coordinator.pauseAll() else coordinator.cancelAll()
+            }
         }
         if (!running) {
             running = true
@@ -74,23 +81,37 @@ class DownloadService : Service() {
             if (coordinator.pending.value) {
                 scope.launch { follow(app) }
             } else {
-                stopNow()
+                stopNow(onlyIfNoNewerStart = true)
             }
         }
     }
 
-    private fun stopNow() {
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+    /**
+     * Leaves the foreground and stops. With [onlyIfNoNewerStart] the stop is skipped when
+     * `startForegroundService` delivered another start in the meantime (the service then stays and that
+     * start's [onStartCommand] restarts [follow]).
+     */
+    private fun stopNow(onlyIfNoNewerStart: Boolean = false) {
+        running = false
+        if (onlyIfNoNewerStart) {
+            // false = a newer start is queued and will call startForeground itself.
+            if (stopSelfResult(lastStartId)) stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
     }
 
     /** Android 15 time limit for `dataSync` services: pause everything and stop (the user can resume in the app). */
     override fun onTimeout(startId: Int, fgsType: Int) {
-        (application as ElisiumApp).coordinator.value?.pauseAll()
+        // Stop first so the Android 15 time limit is always honoured, then pause off the main thread (Room).
         stopNow()
+        val app = application as ElisiumApp
+        app.scope.launch { app.coordinator.value?.pauseAll() }
     }
 
     override fun onDestroy() {
+        main.removeCallbacksAndMessages(null)
         scope.cancel()
         super.onDestroy()
     }

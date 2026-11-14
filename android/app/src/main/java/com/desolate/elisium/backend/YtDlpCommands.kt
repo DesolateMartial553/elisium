@@ -37,6 +37,7 @@ fun buildDownloadArgs(request: DownloadRequest): List<String> {
         "--no-mtime",
         "-o", OUTPUT_TEMPLATE,
         "--continue",
+        "--no-playlist",
         "--newline",
         "--progress-template", PROGRESS_TEMPLATE,
         "--progress-template", POSTPROCESS_TEMPLATE,
@@ -107,6 +108,7 @@ fun interpretOutcome(
     rawLog: String,
     pathFileText: String?,
     terminated: Boolean,
+    errorLog: String = rawLog,
 ): DownloadOutcome {
     val path = if (exitCode == 0 && !terminated) parsePathFile(pathFileText) else null
     val archived = exitCode == 0 && !terminated && path == null && ARCHIVED_MARKER in rawLog
@@ -116,5 +118,19 @@ fun interpretOutcome(
         filePath = path,
         alreadyArchived = archived,
         terminated = terminated,
+        errorLog = errorLog,
     )
+}
+
+/**
+ * The text error classification may read: all of stderr plus the `ERROR:`/`WARNING:` lines of
+ * stdout. Other stdout lines carry the video title (`[download] Destination: <title> [id].mp4`),
+ * and a title such as "Connection Lost" must not turn an unrelated failure into a network error.
+ */
+fun classifiableText(stdout: String, stderr: String): String {
+    val tagged = stdout.lineSequence().filter {
+        val t = it.trimStart()
+        t.startsWith("ERROR:") || t.startsWith("WARNING:")
+    }.joinToString("\n")
+    return listOf(stderr, tagged).filter { it.isNotBlank() }.joinToString("\n")
 }

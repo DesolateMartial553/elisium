@@ -13,7 +13,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -72,6 +74,7 @@ fun SettingsScreen(vm: SettingsViewModel, engine: EngineState, modifier: Modifie
         onDecrease = vm::decreaseConcurrency,
         onIncrease = vm::increaseConcurrency,
         onSpeedLimit = vm::setSpeedLimitText,
+        onSpeedLimitDone = vm::commitSpeedLimit,
         onWifiOnly = vm::setWifiOnly,
         onNotify = vm::setNotifyOnDone,
         onAppearance = vm::setAppearance,
@@ -110,6 +113,7 @@ fun SettingsContent(
     modifier: Modifier = Modifier,
     onAppearance: (Appearance) -> Unit = {},
     onReduceMotion: (Boolean) -> Unit = {},
+    onSpeedLimitDone: () -> Unit = {},
 ) {
     Column(
         modifier = modifier.verticalScroll(rememberScrollState()).padding(16.dp),
@@ -188,7 +192,8 @@ fun SettingsContent(
                 supportingText = stringResource(
                     if (state.speedLimitError != null) R.string.settings_speed_invalid else R.string.settings_speed_help,
                 ),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { onSpeedLimitDone() }),
             )
         }
 

@@ -7,6 +7,8 @@ import com.desolate.elisium.settings.Appearance
 import com.desolate.elisium.settings.SettingsStore
 import com.desolate.elisium.settings.validSpeedLimit
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -21,6 +23,9 @@ enum class SpeedLimitError { Invalid }
 /** Blank means "no limit" and is fine; anything else must pass the engine's [validSpeedLimit] rule. */
 fun speedLimitError(text: String): SpeedLimitError? =
     if (text.isBlank() || validSpeedLimit(text) != null) null else SpeedLimitError.Invalid
+
+/** How long the speed-limit field must sit still before what was typed is stored. */
+const val SPEED_LIMIT_DEBOUNCE_MS = 700L
 
 /** The presets in display order, labels from [Presets]. */
 fun presetChoices(): List<Preset> = Presets.PRESETS.values.toList()
@@ -43,8 +48,13 @@ data class SettingsUiState(
  * Settings screen state. The speed-limit field keeps what the user typed (even if invalid) and only
  * stores values the engine accepts; a blank field clears the limit.
  */
-class SettingsViewModel(private val store: SettingsStore, private val scope: CoroutineScope) {
+class SettingsViewModel(
+    private val store: SettingsStore,
+    private val scope: CoroutineScope,
+    private val speedLimitDebounceMs: Long = SPEED_LIMIT_DEBOUNCE_MS,
+) {
     private val typed = MutableStateFlow<String?>(null)
+    private var pendingSave: Job? = null
 
     val state: StateFlow<SettingsUiState> = combine(store.settings, typed) { s, text ->
         val shown = text ?: (s.speedLimit ?: "")
@@ -74,11 +84,28 @@ class SettingsViewModel(private val store: SettingsStore, private val scope: Cor
         }
     }
 
+    /**
+     * Every keystroke lands here. The text shows at once, but it is stored only after typing pauses
+     * (or on [commitSpeedLimit]), so "10M" never runs a download at "1" byte/s on its way there.
+     */
     fun setSpeedLimitText(text: String) {
         typed.value = text
-        if (speedLimitError(text) == null) {
-            scope.launch { store.setSpeedLimit(text.ifBlank { null }) }
+        pendingSave?.cancel()
+        pendingSave = scope.launch {
+            delay(speedLimitDebounceMs)
+            saveSpeedLimit(text)
         }
+    }
+
+    /** Stores the field now (focus lost, keyboard Done). */
+    fun commitSpeedLimit() {
+        val text = typed.value ?: return
+        pendingSave?.cancel()
+        pendingSave = scope.launch { saveSpeedLimit(text) }
+    }
+
+    private suspend fun saveSpeedLimit(text: String) {
+        if (speedLimitError(text) == null) store.setSpeedLimit(text.ifBlank { null })
     }
 
     fun setWifiOnly(value: Boolean) {

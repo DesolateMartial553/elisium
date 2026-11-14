@@ -749,13 +749,17 @@ class DownloadQueueTest {
     }
 
     @Test
-    fun `readding a failed item leaves it alone`() = runTest {
+    fun `readding a failed item queues it again`() = runTest {
         val r = rig()
         r.backend.startHandler = { _, _ -> FakeHandle().also { it.finish(failureOutcome("HTTP Error 403: Forbidden")) } }
         val first = r.queue.add(URL)
         r.runAll()
         assertEquals("failed", r.queue.item(first.id)!!.state)
-        assertEquals("failed", r.queue.add(URL).state)
+        val again = r.queue.add(URL)
+        assertEquals(first.id, again.id) // same item, not a second one
+        assertEquals("queued", again.state)
+        assertNull(again.error)
+        assertEquals(0, again.attempts)
     }
 
     @Test

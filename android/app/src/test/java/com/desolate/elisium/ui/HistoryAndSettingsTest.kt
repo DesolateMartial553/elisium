@@ -10,6 +10,7 @@ import com.desolate.elisium.ui.history.HistoryViewModel
 import com.desolate.elisium.ui.history.mimeForName
 import com.desolate.elisium.ui.history.toRowModel
 import com.desolate.elisium.ui.settings.SettingsViewModel
+import com.desolate.elisium.ui.settings.SPEED_LIMIT_DEBOUNCE_MS
 import com.desolate.elisium.ui.settings.SpeedLimitError
 import com.desolate.elisium.ui.settings.presetChoices
 import com.desolate.elisium.ui.settings.speedLimitError
@@ -217,14 +218,49 @@ class SettingsViewModelTest {
         val store = FakeSettingsStore()
         val vm = SettingsViewModel(store, backgroundScope)
         vm.setSpeedLimitText("2M")
+        advanceTimeBy(SPEED_LIMIT_DEBOUNCE_MS + 1)
         assertEquals("2M", store.state.value.speedLimit)
         vm.setSpeedLimitText("2m")
+        advanceTimeBy(SPEED_LIMIT_DEBOUNCE_MS + 1)
         assertEquals("2M", store.state.value.speedLimit) // not overwritten
         assertEquals("2m", vm.state.value.speedLimitText)
         assertEquals(SpeedLimitError.Invalid, vm.state.value.speedLimitError)
         vm.setSpeedLimitText("")
+        advanceTimeBy(SPEED_LIMIT_DEBOUNCE_MS + 1)
         assertNull(store.state.value.speedLimit)
         assertNull(vm.state.value.speedLimitError)
+    }
+
+    @Test fun typingDoesNotStoreEveryPrefix() = runTest(UnconfinedTestDispatcher()) {
+        val store = FakeSettingsStore()
+        val stored = mutableListOf<String?>()
+        val spying = object : SettingsStore by store {
+            override suspend fun setSpeedLimit(value: String?): Boolean { stored.add(value); return store.setSpeedLimit(value) }
+        }
+        val vm = SettingsViewModel(spying, backgroundScope)
+        for (typed in listOf("1", "10", "10M")) {
+            vm.setSpeedLimitText(typed)
+            advanceTimeBy(100)
+        }
+        assertEquals(emptyList<String?>(), stored) // nothing saved while typing
+        advanceTimeBy(SPEED_LIMIT_DEBOUNCE_MS)
+        assertEquals(listOf<String?>("10M"), stored) // only the final value, never "1"
+    }
+
+    @Test fun commitStoresAtOnce() = runTest(UnconfinedTestDispatcher()) {
+        val store = FakeSettingsStore()
+        val vm = SettingsViewModel(store, backgroundScope)
+        vm.setSpeedLimitText("5M")
+        vm.commitSpeedLimit()
+        assertEquals("5M", store.state.value.speedLimit)
+        advanceTimeBy(SPEED_LIMIT_DEBOUNCE_MS * 2) // the pending debounce must not undo or repeat it badly
+        assertEquals("5M", store.state.value.speedLimit)
+    }
+
+    @Test fun zeroIsNotAValidLimit() {
+        assertEquals(SpeedLimitError.Invalid, speedLimitError("0"))
+        assertEquals(SpeedLimitError.Invalid, speedLimitError("0.0M"))
+        assertNull(speedLimitError("0.5M"))
     }
 
     @Test fun switchesAndPresetArePersisted() = runTest(UnconfinedTestDispatcher()) {
