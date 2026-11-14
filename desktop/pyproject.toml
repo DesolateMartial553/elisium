@@ -7,6 +7,7 @@ name = "elisium_downloader"
 version = "0.1.0"
 description = "Desktop front end for yt-dlp (Elisium)"
 requires-python = ">=3.11"
+license = {text = "GPL-3.0-or-later"}
 dependencies = ["PySide6"]
 
 [project.optional-dependencies]
@@ -14,6 +15,9 @@ dev = ["pytest>=7"]
 
 [project.scripts]
 elisium = "elisium_downloader.cli:main"
+
+[tool.setuptools.package-data]
+elisium_downloader = ["ui/fonts/*"]
 
 [tool.setuptools.packages.find]
 include = ["elisium_downloader*"]

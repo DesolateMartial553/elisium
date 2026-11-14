@@ -1,0 +1,35 @@
+# Maintainer: Elisium contributors
+# Build and install from a clone of the repo:  cd packaging/arch && makepkg -si
+pkgname=elisium-git
+_pkgname=elisium
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Accessible front end for yt-dlp (Qt)'
+arch=('any')
+url='https://github.com/DesolateMartial553/elisium'
+license=('GPL-3.0-or-later')
+depends=('python' 'pyside6' 'yt-dlp' 'ffmpeg')
+optdepends=('qt6-wayland: native Wayland window')
+makedepends=('git' 'python-build' 'python-installer' 'python-setuptools' 'python-wheel')
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+source=("$_pkgname::git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$_pkgname"
+  printf '0.1.0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+  cd "$_pkgname/desktop"
+  python -m build --wheel --no-isolation
+}
+
+package() {
+  cd "$_pkgname"
+  python -m installer --destdir="$pkgdir" desktop/dist/*.whl
+  install -Dm644 desktop/packaging/elisium.desktop "$pkgdir/usr/share/applications/elisium.desktop"
+  install -Dm644 desktop/packaging/elisium.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/elisium.svg"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

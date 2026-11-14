@@ -41,6 +41,8 @@ cd elisium
 ./install-desktop.sh
 ```
 
+(Alternatively, build a proper package: `sudo pacman -S --needed base-devel git python-build python-installer python-setuptools python-wheel` then `cd packaging/arch && makepkg -si`. This PKGBUILD is not yet tested end to end.)
+
 The script installs for your user only (no sudo): the app under `~/.local/share/elisium`, a launcher at `~/.local/bin/elisium`, a menu entry and icon. Make sure `~/.local/bin` is in your `PATH`. Run it again after `git pull` to update.
 
 Start it from your app launcher or with `elisium`. Files are saved in **~/Downloads/Elisium**.
@@ -82,4 +84,4 @@ Pick Night, Day or System in Settings, and turn on Reduce motion to stop the glo
 
 The design rules shared by both apps live in [`core-spec/SPEC.md`](core-spec/SPEC.md). The `briefs/` folder holds the step-by-step build notes.
 
-Elisium bundles or uses yt-dlp (Unlicense), FFmpeg (LGPL/GPL builds) and, on Android, [youtubedl-android](https://github.com/yausername/youtubedl-android) (GPL-3.0). No licence has been chosen for Elisium's own code yet.
+Elisium is free software under the [GNU GPL v3](LICENSE) or later. It bundles the Inter typeface (SIL Open Font License, see `android/OFL-Inter.txt`) and uses yt-dlp (Unlicense), FFmpeg (LGPL/GPL builds) and, on Android, [youtubedl-android](https://github.com/yausername/youtubedl-android) (GPL-3.0).
