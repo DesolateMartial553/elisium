@@ -79,6 +79,8 @@ class PlaylistDialog(QDialog):
     # -- construction ----------------------------------------------------
     def _build(self, presets: list[Preset], default_id: str | None) -> None:
         root = QVBoxLayout(self)
+        root.setContentsMargins(24, 22, 24, 20)
+        root.setSpacing(12)
         self.title_label = QLabel("Playlist")
         font = self.title_label.font()
         font.setBold(True)
@@ -129,6 +131,9 @@ class PlaylistDialog(QDialog):
             "Type video numbers such as 3-15 or 1,4,9-12 to tick exactly those videos."
         )
         range_label.setBuddy(self.range_edit)
+        self.select_all_button.setAutoDefault(False)
+        self.select_none_button.setAutoDefault(False)
+        tools.setSpacing(8)
         tools.addWidget(self.select_all_button)
         tools.addWidget(self.select_none_button)
         tools.addWidget(range_label)
@@ -141,6 +146,7 @@ class PlaylistDialog(QDialog):
         root.addWidget(self.range_error)
 
         self.list = QListWidget()
+        self.list.setObjectName("entries")
         self.list.setAccessibleName("Videos in the playlist")
         self.list.setAccessibleDescription(
             "Use the arrow keys to move and Space to tick or untick a video."
@@ -174,6 +180,7 @@ class PlaylistDialog(QDialog):
         self.add_button.setAccessibleName("Add selected")
         self.add_button.setAccessibleDescription("Add the ticked videos to the download list.")
         self.add_button.setDefault(True)
+        self.add_button.setProperty("primary", True)
         self.buttons.addButton(self.add_button, QDialogButtonBox.ButtonRole.AcceptRole)
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.setAccessibleName("Cancel")

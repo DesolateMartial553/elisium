@@ -5,7 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from PySide6.QtCore import QObject, Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPixmap
+from PySide6.QtGui import QFont, QImage, QPainter, QPainterPath, QPixmap
+
+from . import theme
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
 __all__ = ["THUMB_WIDTH", "ThumbnailLoader", "placeholder_pixmap", "qt_fetcher"]
@@ -17,18 +19,34 @@ _THUMB_HEIGHT = 135
 Fetcher = Callable[[str, Callable[[bytes | None], None]], None]
 
 
+def _rounded(pixmap: QPixmap) -> QPixmap:
+    """The same pixmap with rounded corners (transparent outside)."""
+    out = QPixmap(pixmap.size())
+    out.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(out)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    path = QPainterPath()
+    radius = float(theme.RADIUS["small"])
+    path.addRoundedRect(0, 0, pixmap.width(), pixmap.height(), radius, radius)
+    painter.setClipPath(path)
+    painter.drawPixmap(0, 0, pixmap)
+    painter.end()
+    return out
+
+
 def placeholder_pixmap(text: str = "No preview") -> QPixmap:
-    """A neutral grey box shown while loading or when the image failed."""
+    """A soft box in the theme's colours, shown while loading or when the image failed."""
+    p = theme.current()
     pixmap = QPixmap(THUMB_WIDTH, _THUMB_HEIGHT)
-    pixmap.fill(QColor("#8a8f98"))
+    pixmap.fill(p.color("raised"))
     painter = QPainter(pixmap)
-    painter.setPen(QColor("#ffffff"))
+    painter.setPen(p.color("muted"))
     font = QFont()
     font.setPointSize(11)
     painter.setFont(font)
     painter.drawText(pixmap.rect(), int(Qt.AlignmentFlag.AlignCenter), text)
     painter.end()
-    return pixmap
+    return _rounded(pixmap)
 
 
 def qt_fetcher(parent: QObject | None = None) -> Fetcher:
@@ -86,9 +104,9 @@ class ThumbnailLoader(QObject):
                 return
             image = QImage()
             if data and image.loadFromData(data) and not image.isNull():
-                self.pixmap = QPixmap.fromImage(image).scaledToWidth(
+                self.pixmap = _rounded(QPixmap.fromImage(image).scaledToWidth(
                     THUMB_WIDTH, Qt.TransformationMode.SmoothTransformation
-                )
+                ))
                 self.loaded = True
             else:
                 self.pixmap = placeholder_pixmap("Preview unavailable")

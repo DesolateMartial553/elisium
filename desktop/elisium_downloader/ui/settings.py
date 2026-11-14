@@ -32,6 +32,8 @@ class Settings:
     preset_id: str = DEFAULT_ID
     notify_on_done: bool = True
     close_to_tray: bool = False
+    appearance: str = "system"  # "system" | "night" | "day"
+    reduce_motion: bool = False
 
     def __post_init__(self) -> None:
         self.validate()
@@ -48,6 +50,10 @@ class Settings:
             self.notify_on_done = True
         if not isinstance(self.close_to_tray, bool):
             self.close_to_tray = False
+        if self.appearance not in ("system", "night", "day"):
+            self.appearance = "system"
+        if not isinstance(self.reduce_motion, bool):
+            self.reduce_motion = False
 
 
 def default_path() -> Path:

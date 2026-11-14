@@ -22,6 +22,7 @@ Workflow: OpenCode implements one brief from `briefs/`; Claude audits the diff a
 - ANDROID 5D DONE 2026-11-14: Compose shell (Downloads/History/Settings), permissions, FileProvider for Open; Sonnet subagent. Claude reran: 273 JVM tests pass, lint 0 errors, APK 73.9 MB. Look, TalkBack, and all behaviour UNVERIFIED on a device (see briefs/phase5-d-android-screens.result.md).
 - DESKTOP 3A DONE 2026-11-14: single instance (QLocalServer, flock-guarded), `elisium add URL|-`, `elisium://add?url=` handler, http/https-only validation, default preset only. Sonnet subagent; Claude reran 446 tests pass, read ipc.py validation. Real browser click / Hyprland / dunst UNVERIFIED.
 - SCOPE (owner, 2026-11-14): for the owner and friends only, apps only. No browser extension, no store listings, no large-scale distribution polish.
+- REDESIGN 2026-11-14 "Afterglow" (design/DESIGN.md, tokens.json): Android 1399e31 (292 tests, lint 0 errors), desktop (495 tests, screenshots in docs/screenshots). Not done: per-card action buttons, card enter animation (desktop). Known: tests/test_ipc.py::test_real_qt_client_round_trip segfaults ~1 in 3 full runs (pre-existing). Visuals on real devices UNVERIFIED.
 - Next: Android phone test of Elisium-debug-0.2.0.apk, then 5E (a11y fixes + signed release APK for friends); desktop: Arch install package (PKGBUILD or simple install script) so friends can install it, 5E a11y + signed release; desktop Phase 3 (elisium:// handler, CLI add, browser ext), Phase 4 packaging, Phase 5 Android.
 
 ## Log

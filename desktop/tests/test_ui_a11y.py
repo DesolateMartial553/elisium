@@ -486,17 +486,17 @@ def test_main_history_settings_fit_at_200_percent(big_text, qapp, ui_queue, tmp_
                 assert not table.horizontalScrollBar().isVisible(), f"{name} scrolls sideways"
                 assert table.horizontalScrollBar().maximum() == 0
         window.show_section(0)
-        # Wide enough for every column: none may be hidden or clip its text.
+        # Cards: the row height grows with the text so no line of a card is clipped.
         window.resize(3000, window.height())
         pump()
-        assert table_cells_fit(window.table, {
-            1: STATUS_TEXT["downloading"], 3: "99.9 MB/s", 4: "99h 59m", 5: "999.9 MB",
-        }) == []
+        need = window.delegate.row_height(window.table.font())
+        assert window.table.verticalHeader().defaultSectionSize() >= need
+        assert need >= 3 * window.table.fontMetrics().height()
         window.show_section(1)
         pump()
         history = window.history_page.table
-        assert table_cells_fit(history, {1: "www.youtube.com", 2: FILE_MISSING_TEXT,
-                                         3: "2000-12-31 23:59"}) == []
+        assert history.verticalHeader().defaultSectionSize() >= \
+            window.history_page.delegate.row_height(history.font())
         assert window.sidebar.width() >= window.sidebar.fontMetrics().horizontalAdvance("Downloads")
         window.hide()
     finally:

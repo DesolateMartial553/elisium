@@ -1,12 +1,33 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#2b2540"/>
-      <stop offset="1" stop-color="#171325"/>
+    <linearGradient id="ink" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#211836"/>
+      <stop offset="1" stop-color="#0E0A1A"/>
     </linearGradient>
+    <linearGradient id="glow" gradientUnits="userSpaceOnUse" x1="30" y1="26" x2="98" y2="94">
+      <stop offset="0" stop-color="#B388FF"/>
+      <stop offset="0.55" stop-color="#FF8FB8"/>
+      <stop offset="1" stop-color="#FFC47E"/>
+    </linearGradient>
+    <linearGradient id="horizon" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#FF8FB8" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#FF8FB8" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#FF8FB8" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="64" cy="104" r="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF8FB8" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#FF8FB8" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="tile"><rect width="128" height="128" rx="28"/></clipPath>
   </defs>
-  <rect width="128" height="128" rx="28" fill="url(#bg)"/>
-  <path d="M64 26v50" stroke="#c9a7f2" stroke-width="12" stroke-linecap="round" fill="none"/>
-  <path d="M42 56l22 22 22-22" stroke="#c9a7f2" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-  <path d="M30 94h68" stroke="#c9a7f2" stroke-width="12" stroke-linecap="round" fill="none"/>
+  <rect width="128" height="128" rx="28" fill="url(#ink)"/>
+  <g clip-path="url(#tile)">
+    <rect width="128" height="128" fill="url(#halo)"/>
+    <rect x="0" y="108" width="128" height="2" fill="url(#horizon)"/>
+  </g>
+  <g fill="none" stroke="url(#glow)" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M64 26v50"/>
+    <path d="M42 56l22 22 22-22"/>
+    <path d="M30 94h68"/>
+  </g>
 </svg>

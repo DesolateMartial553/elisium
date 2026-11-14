@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from PySide6.QtCore import QEvent, QModelIndex, QPoint, QTimer, QUrl, Qt
+import time
+
+from PySide6.QtCore import QEvent, QPoint, QTimer, QUrl, Qt
 from PySide6.QtGui import (
     QAccessible,
     QAccessibleAnnouncementEvent,
@@ -38,11 +40,8 @@ from PySide6.QtWidgets import (
     QProxyStyle,
     QPushButton,
     QStyle,
-    QStyledItemDelegate,
     QStyleOption,
-    QStyleOptionProgressBar,
     QStackedWidget,
-    QStyleOptionViewItem,
     QTableView,
     QToolBar,
     QVBoxLayout,
@@ -52,6 +51,7 @@ from PySide6.QtWidgets import (
 from elisium_downloader.engine import runner
 from elisium_downloader.engine.queue import DownloadQueue
 
+from . import theme
 from .bridge import QueueBridge
 from .history_page import HistoryPage
 from .playlist_dialog import PlaylistDialog
@@ -59,21 +59,11 @@ from .quality_dialog import QualityDialog
 from .settings import Settings
 from .settings_page import SettingsPage
 from .tray import TrayController, tray_wanted
-from .model import (
-    COL_ETA,
-    COL_PROGRESS,
-    COL_SIZE,
-    COL_SPEED,
-    COL_STATUS,
-    COL_TITLE,
-    COLUMNS,
-    PERCENT_ROLE,
-    STATUS_TEXT,
-    DownloadModel,
-)
+from .model import COLUMNS, DownloadModel
 from .quality_dialog import dialog_scale, font_scale
+from .widgets import EmptyState, HorizonHeader, QueueDelegate, RowHeightKeeper, action_icon, breath
 
-__all__ = ["MainWindow", "ProgressAnnouncer", "ProgressDelegate", "SHORTCUTS", "extract_urls"]
+__all__ = ["MainWindow", "ProgressAnnouncer", "SHORTCUTS", "extract_urls"]
 
 PAUSABLE = frozenset({"queued", "probing", "downloading", "merging", "converting"})
 CANCELLABLE = frozenset(
@@ -245,47 +235,6 @@ class ProgressAnnouncer:
             self._say(f"{self._name(item)}: {PROGRESS_STEPS[reached - 1]} percent")
 
 
-class ProgressDelegate(QStyledItemDelegate):
-    """Draws a progress bar with the percent text on it."""
-
-    def paint(self, painter: Any, option: QStyleOptionViewItem, index: QModelIndex) -> None:
-        percent = index.data(PERCENT_ROLE)
-        if percent is None:
-            super().paint(painter, option, index)
-            return
-        style = option.widget.style() if option.widget else QApplication.style()
-        # Paint the row background first, so a selected row has no gap in
-        # its highlight, then the bar, then the percent as plain text in the
-        # palette's own text colour (always readable, never on the bar fill).
-        style.drawPrimitive(
-            QStyle.PrimitiveElement.PE_PanelItemViewItem, option, painter, option.widget
-        )
-        text_width = option.fontMetrics.horizontalAdvance("100%") + 12
-        bar = QStyleOptionProgressBar()
-        margin = max(8, option.rect.height() // 4)
-        bar.rect = option.rect.adjusted(6, margin, -(text_width + 8), -margin)
-        bar.state = option.state | QStyle.StateFlag.State_Horizontal
-        bar.direction = option.direction
-        bar.palette = option.palette
-        bar.minimum = 0
-        bar.maximum = 100
-        bar.progress = int(round(percent))
-        bar.textVisible = False
-        style.drawControl(QStyle.ControlElement.CE_ProgressBar, bar, painter, option.widget)
-        selected = bool(option.state & QStyle.StateFlag.State_Selected)
-        colour = (
-            option.palette.highlightedText() if selected else option.palette.text()
-        )
-        painter.save()
-        painter.setPen(colour.color())
-        painter.drawText(
-            option.rect.adjusted(0, 0, -6, 0),
-            int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
-            f"{percent:.0f}%",
-        )
-        painter.restore()
-
-
 class MainWindow(QMainWindow):
     def __init__(
         self,
@@ -343,8 +292,11 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         downloads_page = QWidget(self)
         layout = QVBoxLayout(downloads_page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
 
         row = QHBoxLayout()
+        row.setSpacing(8)
         self.url_edit = QLineEdit()
         self.url_edit.setPlaceholderText("Paste a video link")
         self.url_edit.setClearButtonEnabled(True)
@@ -358,6 +310,7 @@ class MainWindow(QMainWindow):
             "Add the links from the clipboard to the download list."
         )
         self.add_button = QPushButton("Add")
+        self.add_button.setProperty("primary", True)
         self.add_button.setAccessibleName("Add")
         self.add_button.setAccessibleDescription(
             "Add the link in the box to the download list."
@@ -382,22 +335,27 @@ class MainWindow(QMainWindow):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setItemDelegateForColumn(COL_PROGRESS, ProgressDelegate(self.table))
+        self.table.setObjectName("cards")
+        # Cards: one delegate paints the whole row into column 0; the other
+        # columns stay in the model (accessible text, tests) but are hidden.
+        self.delegate = QueueDelegate(self.table)
+        self.table.setItemDelegateForColumn(0, self.delegate)
         self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setVisible(False)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        for column in range(1, len(COLUMNS)):
+            self.table.setColumnHidden(column, True)
+        self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        self.table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.table.setShowGrid(False)
         # Tab must leave the table, not walk its cells.
         self.table.setTabKeyNavigation(False)
-        self.table.setAlternatingRowColors(True)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        header = self.table.horizontalHeader()
-        header.setStretchLastSection(False)
-        header.setSectionResizeMode(COL_TITLE, QHeaderView.ResizeMode.Stretch)
-        for column in range(1, len(COLUMNS)):
-            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
-        # A tiling compositor (Hyprland) can squeeze the window below the
-        # table's minimum width; scroll sideways then instead of clipping.
-        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.row_heights = RowHeightKeeper(self.table, self.delegate)
+        self.empty_state = EmptyState(self.table.viewport())
         layout.addWidget(self.table, 1)
+        self._downloads_layout = layout
 
         self.history_page = HistoryPage(self.queue, self.bridge)
         self.settings_page = SettingsPage(
@@ -409,6 +367,8 @@ class MainWindow(QMainWindow):
             self.stack.addWidget(page)
 
         self.sidebar = QListWidget()
+        self.sidebar.setObjectName("sidebar")
+        self.sidebar.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.sidebar.setAccessibleName("Sections")
         self.sidebar.setAccessibleDescription(
             "Switch between Downloads, History and Settings with the arrow keys."
@@ -419,9 +379,17 @@ class MainWindow(QMainWindow):
         self.sidebar.currentRowChanged.connect(self.show_section)
 
         central = QWidget(self)
-        outer = QHBoxLayout(central)
+        frame = QVBoxLayout(central)
+        frame.setContentsMargins(0, 0, 0, 0)
+        frame.setSpacing(0)
+        self.header = HorizonHeader()
+        frame.addWidget(self.header)
+        outer = QHBoxLayout()
+        outer.setContentsMargins(12, 8, 16, 8)
+        outer.setSpacing(12)
         outer.addWidget(self.sidebar)
         outer.addWidget(self.stack, 1)
+        frame.addLayout(outer, 1)
         self.setCentralWidget(central)
 
         self.summary_label = QLabel()
@@ -446,9 +414,9 @@ class MainWindow(QMainWindow):
         self.table.doubleClicked.connect(lambda *_: self.open_folder())
 
     def _make_action(
-        self, text: str, theme: str, fallback: QStyle.StandardPixmap, description: str, slot: Any
+        self, text: str, _icon_name: str, _fallback: QStyle.StandardPixmap, description: str, slot: Any
     ) -> QAction:
-        action = QAction(QIcon.fromTheme(theme, self.style().standardIcon(fallback)), text, self)
+        action = QAction(text, self)
         action.setToolTip(description)
         action.setStatusTip(description)
         action.triggered.connect(slot)
@@ -493,7 +461,31 @@ class MainWindow(QMainWindow):
             button.setAccessibleName(action.text())
             button.setAccessibleDescription(action.toolTip())
             button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
-        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolbar)
+        self._downloads_layout.insertWidget(1, self.toolbar)
+        self._apply_icons()
+        theme.notifier().changed.connect(self._on_theme_changed)
+        breath().valueChanged.connect(self._breathe)
+        self._last_repaint = 0.0
+
+    def _apply_icons(self) -> None:
+        for action, kind in (
+            (self.pause_action, "pause"), (self.resume_action, "play"),
+            (self.retry_action, "retry"), (self.cancel_action, "cancel"),
+            (self.open_action, "folder"),
+        ):
+            action.setIcon(action_icon(kind))
+
+    def _on_theme_changed(self) -> None:
+        self._apply_icons()
+        self.table.viewport().update()
+        self.history_page.table.viewport().update()
+
+    def _breathe(self, *_: object) -> None:
+        """Repaint the cards a few times a second while the glow breathes."""
+        now = time.monotonic()
+        if now - self._last_repaint >= 0.06 and self.table.isVisible():
+            self._last_repaint = now
+            self.table.viewport().update()
 
     def _build_shortcuts(self) -> None:
         def shortcut(keys: str, slot: Any, widget: QWidget, context: Qt.ShortcutContext) -> QShortcut:
@@ -545,59 +537,14 @@ class MainWindow(QMainWindow):
 
     # -- text size -------------------------------------------------------
     def _fit_to_font(self) -> None:
-        """Size the sidebar and table columns from the text size (so 200% fits)."""
+        """Size the sidebar and the cards from the text size (so 200% fits)."""
         fm = QFontMetrics(self.font())
         pad = fm.height() // 2 + 8
-
-        def wide(text: str) -> int:
-            return fm.horizontalAdvance(text) + pad
-
-        floor = {COL_STATUS: 130, COL_PROGRESS: 150, COL_SPEED: 90, COL_ETA: 70, COL_SIZE: 90}
-        content = {
-            COL_STATUS: max(wide(text) for text in STATUS_TEXT.values()),
-            COL_PROGRESS: wide("100%") + round(40 * font_scale(self)),
-            COL_SPEED: wide("999.9 MB/s"),
-            COL_ETA: wide("99h 59m"),
-            COL_SIZE: wide("999.9 MB"),
-        }
-        self._column_widths = {}
-        for column, minimum in floor.items():
-            width = max(minimum, content[column], wide(str(COLUMNS[column])))
-            self.table.setColumnWidth(column, width)
-            self._column_widths[column] = width
-        self._title_min = fm.horizontalAdvance("M") * 8
-        # Only the essential columns set a hard minimum; the rest hide when
-        # the window is narrow (see _update_columns).
-        essential = sum(self._column_widths[c] for c in (COL_STATUS, COL_PROGRESS))
-        self.table.setMinimumWidth(essential + self._title_min + self.table.frameWidth() * 2)
+        self.row_heights.update()
+        self.table.setMinimumWidth(fm.horizontalAdvance("M") * 24 + self.table.frameWidth() * 2)
         self.sidebar.setFixedWidth(
-            max(150, max(fm.horizontalAdvance(name) for name in SECTIONS) + pad * 2)
+            max(160, max(fm.horizontalAdvance(name) for name in SECTIONS) + pad * 4 + 8)
         )
-        self._update_columns()
-
-    # Lowest priority first: these are hidden first when the window is narrow
-    # (a tiling compositor such as Hyprland often makes it narrow).
-    _DROP_ORDER = (COL_SIZE, COL_ETA, COL_SPEED)
-
-    def _update_columns(self) -> None:
-        """Hide the least important columns that do not fit, show the rest."""
-        widths = getattr(self, "_column_widths", None)
-        if not widths or not hasattr(self, "table"):
-            return
-        available = self.table.viewport().width()
-        hidden: set[int] = set()
-        needed = self._title_min + sum(widths.values())
-        for column in self._DROP_ORDER:
-            if needed <= available:
-                break
-            hidden.add(column)
-            needed -= widths[column]
-        for column in widths:
-            self.table.setColumnHidden(column, column in hidden)
-
-    def resizeEvent(self, event: Any) -> None:
-        super().resizeEvent(event)
-        self._update_columns()
 
     def changeEvent(self, event: QEvent) -> None:
         super().changeEvent(event)
@@ -620,7 +567,12 @@ class MainWindow(QMainWindow):
             self.history_page.refresh()
 
     def _on_settings_changed(self, settings: Settings) -> None:
+        previous = self.settings
         self.settings = settings
+        app = QApplication.instance()
+        if settings.appearance != previous.appearance and app is not None:
+            theme.apply(app, settings.appearance)
+        theme.set_reduce_motion(settings.reduce_motion)
 
     # -- model feed ------------------------------------------------------
     def _on_event(self, event: dict[str, Any]) -> None:
@@ -655,6 +607,8 @@ class MainWindow(QMainWindow):
                 counts[key] += 1
         text = ", ".join(f"{n} {name}" for name, n in counts.items() if n)
         self.summary_label.setText(text or "No downloads")
+        breath().set_active(counts["downloading"] > 0)
+        self.empty_state.setVisible(self.model.rowCount() == 0)
         if self.tray is not None:
             self.tray.update_tooltip(self.summary_label.text())
 

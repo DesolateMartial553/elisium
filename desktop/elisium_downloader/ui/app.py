@@ -15,9 +15,10 @@ from elisium_downloader.engine.archive import Archive
 from elisium_downloader.engine.history import History
 from elisium_downloader.engine.queue import DownloadQueue
 
-from . import ipc
+from . import ipc, theme
 from . import settings as settings_mod
 from .main_window import MainWindow
+from .widgets import app_icon
 
 __all__ = ["create_app", "run"]
 
@@ -59,6 +60,10 @@ def create_app(
     settings = settings_mod.load(settings_path) if settings_path else settings_mod.Settings()
     if settings_path or not injected:
         settings_mod.apply(settings, queue)
+    if settings_path or not injected:
+        theme.apply(app, settings.appearance)
+        theme.set_reduce_motion(settings.reduce_motion)
+        app.setWindowIcon(app_icon())
     window = MainWindow(
         queue, settings=settings, settings_path=settings_path, version_fn=version_fn
     )

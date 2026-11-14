@@ -7,16 +7,18 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, QUrl, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -43,6 +45,44 @@ def fetch_ytdlp_version(ytdlp: str = "yt-dlp") -> str | None:
     return text if done.returncode == 0 and text else None
 
 
+class _PageScroll(QScrollArea):
+    """A scroll area whose content grows when wrapped labels need more height.
+
+    QScrollArea sizes its page before the scroll bar appears; once the bar narrows the
+    viewport, wrapped text needs more lines and would be clipped. So the page's minimum
+    height is re-derived from the layout for the width it really gets.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.viewport().installEventFilter(self)
+
+    def _fit(self) -> None:
+        page = self.widget()
+        if page is not None and page.layout() is not None:
+            page.setMinimumHeight(page.layout().totalHeightForWidth(self.viewport().width()))
+
+    def resizeEvent(self, event: object) -> None:  # noqa: N802
+        super().resizeEvent(event)  # type: ignore[arg-type]
+        self._fit()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
+        if watched is self.viewport() and event.type() == QEvent.Type.Resize:
+            self._fit()
+        return super().eventFilter(watched, event)
+
+
+class _WrapLabel(QLabel):
+    """A wrapping label that always keeps the height its wrapped text needs."""
+
+    def resizeEvent(self, event: object) -> None:  # noqa: N802
+        super().resizeEvent(event)  # type: ignore[arg-type]
+        if self.wordWrap() and self.width() > 0:
+            need = self.heightForWidth(self.width())
+            if need > 0 and self.minimumHeight() != need:
+                self.setMinimumHeight(need)
+
+
 class _VersionSignal(QObject):
     done = Signal(object)
 
@@ -65,16 +105,51 @@ class SettingsPage(QWidget):
         self._version_fn = version_fn or fetch_ytdlp_version
         self._loading = True
         self._build_ui()
+        self._fit_to_font()
         self._load_controls()
         self._loading = False
         self._start_version_check()
 
     # -- construction ----------------------------------------------------
     def _build_ui(self) -> None:
-        outer = QVBoxLayout(self)
-        form = QFormLayout()
-        outer.addLayout(form)
+        page = QVBoxLayout(self)
+        page.setContentsMargins(0, 0, 0, 0)
+        scroll = _PageScroll()
+        scroll.setObjectName("settingsScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        page.addWidget(scroll)
+        body = QWidget()
+        scroll.setWidget(body)
+        outer = QVBoxLayout(body)
+        outer.setSpacing(16)
 
+        title = QLabel("Settings")
+        title.setObjectName("pageTitle")
+        outer.addWidget(title)
+
+        def card(heading: str) -> QFormLayout:
+            frame = QFrame()
+            frame.setProperty("card", True)
+            box = QVBoxLayout(frame)
+            box.setContentsMargins(20, 16, 20, 18)
+            box.setSpacing(12)
+            label = QLabel(heading)
+            label.setObjectName("cardTitle")
+            box.addWidget(label)
+            form = QFormLayout()
+            form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+            form.setVerticalSpacing(12)
+            form.setHorizontalSpacing(24)
+            form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+            box.addLayout(form)
+            outer.addWidget(frame)
+            return form
+
+        form = card("Downloads")
         self.concurrency_spin = QSpinBox()
         self.concurrency_spin.setRange(1, MAX_CONCURRENCY)
         self._describe(self.concurrency_spin, "Parallel downloads",
@@ -97,6 +172,7 @@ class SettingsPage(QWidget):
         self._describe(self.limit_unit, "Speed limit unit",
                        "Kilobytes or megabytes per second.")
         limit_row = QHBoxLayout()
+        limit_row.setSpacing(12)
         limit_row.addWidget(self.limit_check)
         limit_row.addWidget(self.limit_spin)
         limit_row.addWidget(self.limit_unit)
@@ -110,6 +186,7 @@ class SettingsPage(QWidget):
                        "The quality used for new downloads.")
         form.addRow(self._label("Default quality", self.preset_combo), self.preset_combo)
 
+        form = card("Notifications and tray")
         self.notify_check = QCheckBox("Notify when a download finishes")
         self._describe(self.notify_check, "Notify when a download finishes",
                        "Show a message when a download is done.")
@@ -119,7 +196,20 @@ class SettingsPage(QWidget):
                        "When on, closing the window hides it to the tray and downloads carry on.")
         form.addRow("", self.tray_check)
 
-        self.folder_label = QLabel(str(self.queue.output_dir))
+        form = card("Appearance")
+        self.appearance_combo = QComboBox()
+        for label, key in (("System", "system"), ("Night", "night"), ("Day", "day")):
+            self.appearance_combo.addItem(label, key)
+        self._describe(self.appearance_combo, "Appearance",
+                       "Follow the system light or dark setting, or always use Night or Day.")
+        form.addRow(self._label("Appearance", self.appearance_combo), self.appearance_combo)
+        self.motion_check = QCheckBox("Reduce motion")
+        self._describe(self.motion_check, "Reduce motion",
+                       "Turn off the glow breathing and the busy bar. Nothing else changes.")
+        form.addRow("", self.motion_check)
+
+        form = card("Folders and about")
+        self.folder_label = _WrapLabel(str(self.queue.output_dir))
         self.folder_label.setWordWrap(True)
         self.folder_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._describe(self.folder_label, "Download folder",
@@ -142,12 +232,20 @@ class SettingsPage(QWidget):
                        "Open the folder that holds the history and archive.")
         form.addRow("", self.open_data_button)
         outer.addStretch(1)
+        # One label column width for every card, so the fields line up.
+        labels = [w for w in body.findChildren(QLabel)
+                  if w.buddy() is not None]
+        if labels:
+            widest = max(w.sizeHint().width() for w in labels)
+            for w in labels:
+                w.setMinimumWidth(widest)
 
         for signal in (
             self.concurrency_spin.valueChanged, self.limit_check.toggled,
             self.limit_spin.valueChanged, self.limit_unit.currentIndexChanged,
             self.preset_combo.currentIndexChanged, self.notify_check.toggled,
-            self.tray_check.toggled,
+            self.tray_check.toggled, self.appearance_combo.currentIndexChanged,
+            self.motion_check.toggled,
         ):
             signal.connect(self._changed)
         self.open_folder_button.clicked.connect(self.open_download_folder)
@@ -159,7 +257,9 @@ class SettingsPage(QWidget):
         self.setTabOrder(self.limit_unit, self.preset_combo)
         self.setTabOrder(self.preset_combo, self.notify_check)
         self.setTabOrder(self.notify_check, self.tray_check)
-        self.setTabOrder(self.tray_check, self.open_folder_button)
+        self.setTabOrder(self.tray_check, self.appearance_combo)
+        self.setTabOrder(self.appearance_combo, self.motion_check)
+        self.setTabOrder(self.motion_check, self.open_folder_button)
         self.setTabOrder(self.open_folder_button, self.open_data_button)
 
     @staticmethod
@@ -172,6 +272,21 @@ class SettingsPage(QWidget):
         label = QLabel(text)
         label.setBuddy(buddy)
         return label
+
+    def _fit_to_font(self) -> None:
+        """Give the number boxes room for their digits and arrows at any text size."""
+        fm = self.fontMetrics()
+        for spin, sample in ((self.concurrency_spin, "00"), (self.limit_spin, "00000.0")):
+            spin.setMinimumWidth(fm.horizontalAdvance(sample) + 120)
+        # A path label this wide makes the form wrap it under its caption when short of room.
+        self.folder_label.setMinimumWidth(fm.horizontalAdvance("M") * 16)
+
+    def changeEvent(self, event: QEvent) -> None:  # noqa: N802
+        super().changeEvent(event)
+        if hasattr(self, "limit_spin") and event.type() in (
+            QEvent.Type.FontChange, QEvent.Type.ApplicationFontChange
+        ):
+            self._fit_to_font()
 
     # -- state <-> controls ----------------------------------------------
     def _load_controls(self) -> None:
@@ -188,6 +303,8 @@ class SettingsPage(QWidget):
         self.preset_combo.setCurrentIndex(max(0, self.preset_combo.findData(s.preset_id)))
         self.notify_check.setChecked(s.notify_on_done)
         self.tray_check.setChecked(s.close_to_tray)
+        self.appearance_combo.setCurrentIndex(max(0, self.appearance_combo.findData(s.appearance)))
+        self.motion_check.setChecked(s.reduce_motion)
         self.limit_spin.setEnabled(self.limit_check.isChecked())
         self.limit_unit.setEnabled(self.limit_check.isChecked())
 
@@ -209,6 +326,8 @@ class SettingsPage(QWidget):
             preset_id=self.preset_combo.currentData(),
             notify_on_done=self.notify_check.isChecked(),
             close_to_tray=self.tray_check.isChecked(),
+            appearance=self.appearance_combo.currentData(),
+            reduce_motion=self.motion_check.isChecked(),
         )
         if self.path is not None:
             try:

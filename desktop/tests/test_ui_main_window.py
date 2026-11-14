@@ -264,19 +264,20 @@ def test_default_probe_goes_through_the_queues_public_probe(window, ui_queue) ->
     assert ui_queue.ytdlp == "yt-dlp"
 
 
-def test_narrow_window_hides_low_priority_columns_and_wide_shows_them(window) -> None:
-    from elisium_downloader.ui.model import COL_ETA, COL_SIZE, COL_SPEED, COL_STATUS
+def test_narrow_cards_drop_low_priority_info_first(window) -> None:
+    from PySide6.QtGui import QFontMetrics
 
-    window.resize(1400, 500)
-    window.show()
-    window._update_columns()
-    assert not window.table.isColumnHidden(COL_SIZE)
-    assert not window.table.isColumnHidden(COL_ETA)
-    window.resize(window.minimumSizeHint().width() + 10, 500)
-    window._update_columns()
-    assert window.table.isColumnHidden(COL_SIZE)
-    assert not window.table.isColumnHidden(COL_STATUS)
-    window.resize(1400, 500)
-    window._update_columns()
-    assert not window.table.isColumnHidden(COL_SIZE)
-    assert not window.table.isColumnHidden(COL_SPEED)
+    from elisium_downloader.ui.widgets import caption_parts, visible_parts
+
+    row = {"state": "downloading", "progress": {"speed": 4_000_000.0, "eta": 80,
+                                                 "total_bytes": 52_428_800}}
+    parts = caption_parts(row)
+    assert [k for k, _t in parts] == ["speed", "size", "eta"]
+    fm = QFontMetrics(window.font())
+    assert [k for k, _t in visible_parts(parts, fm, 2000)] == ["speed", "size", "eta"]
+    assert [k for k, _t in visible_parts(parts, fm, 150)] == ["speed", "eta"] or \
+        [k for k, _t in visible_parts(parts, fm, 150)] == ["speed"]
+    assert [k for k, _t in visible_parts(parts, fm, 1)] == []
+    # the table keeps one visible column (the card); the rest stay in the model
+    assert not window.table.isColumnHidden(0)
+    assert window.table.isColumnHidden(1)

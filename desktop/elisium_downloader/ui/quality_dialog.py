@@ -30,6 +30,7 @@ from elisium_downloader.engine.formats import FormatRow
 from elisium_downloader.engine.presets import PRESETS, Preset, get
 from elisium_downloader.engine.queue import DownloadQueue
 
+from . import theme
 from .probe_worker import ProbeWorker
 from .thumbnail import ThumbnailLoader, placeholder_pixmap
 
@@ -45,12 +46,15 @@ _REFERENCE_LINE_HEIGHT = 16  # fontMetrics().height() of the default 10 pt UI fo
 def reduce_motion() -> bool:
     """True when the user wants no animation.
 
-    ``ELISIUM_REDUCE_MOTION=1`` forces it on and ``=0`` off. Otherwise a Qt that
+    ``ELISIUM_REDUCE_MOTION=1`` forces it on and ``=0`` off. Otherwise the Settings
+    switch "Reduce motion" counts, and a Qt that
     exposes a reduced-motion style hint is honoured (PySide6 6.12 has none).
     """
     override = os.environ.get("ELISIUM_REDUCE_MOTION", "").strip()
     if override in ("1", "0"):
         return override == "1"
+    if theme.reduce_motion_enabled():  # the Settings switch "Reduce motion"
+        return True
     hints = QGuiApplication.styleHints()
     return bool(getattr(hints, "reducedMotion", lambda: False)())
 
@@ -155,8 +159,11 @@ class QualityDialog(QDialog):
     # -- construction ----------------------------------------------------
     def _build(self, presets: list[Preset], default_id: str | None) -> None:
         root = QVBoxLayout(self)
+        root.setContentsMargins(24, 22, 24, 20)
+        root.setSpacing(12)
 
         top = QHBoxLayout()
+        top.setSpacing(18)
         self.thumbnail_label = QLabel()
         self.thumbnail_label.setPixmap(placeholder_pixmap("Loading..."))
         self.thumbnail_label.setAccessibleName("Video preview")
@@ -266,6 +273,7 @@ class QualityDialog(QDialog):
         self.download_button.setAccessibleName("Download")
         self.download_button.setAccessibleDescription("Add this video to the download list.")
         self.download_button.setDefault(True)
+        self.download_button.setProperty("primary", True)
         self.buttons.addButton(self.download_button, QDialogButtonBox.ButtonRole.AcceptRole)
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.setAccessibleName("Cancel")
@@ -299,6 +307,7 @@ class QualityDialog(QDialog):
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.verticalHeader().setVisible(False)
+        table.setShowGrid(False)
         table.setTabKeyNavigation(False)
         table.horizontalHeader().setStretchLastSection(True)
         table.selectionModel().selectionChanged.connect(lambda *_: self._update_selection_text())

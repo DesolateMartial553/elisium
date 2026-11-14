@@ -57,19 +57,21 @@ Links are only accepted if they are http or https, and `elisium://` links can on
 
 ### Screenshots (sample data)
 
-| Queue | Choose quality |
+Night and Day themes, following your system setting (or choose in Settings).
+
+| Queue (Night) | Queue (Day) |
 | --- | --- |
-| ![The download queue](docs/screenshots/queue.png) | ![Choose quality dialog](docs/screenshots/choose-quality.png) |
+| ![The download queue, night](docs/screenshots/queue-night.png) | ![The download queue, day](docs/screenshots/queue-day.png) |
 
-| History | Settings |
+| Choose quality | History |
 | --- | --- |
-| ![History page](docs/screenshots/history.png) | ![Settings page](docs/screenshots/settings.png) |
+| ![Choose quality dialog](docs/screenshots/choose-quality-night.png) | ![History page](docs/screenshots/history-night.png) |
 
-| Playlist picker |
-| --- |
-| ![Playlist picker](docs/screenshots/playlist.png) |
+| Settings | Playlist picker |
+| --- | --- |
+| ![Settings page](docs/screenshots/settings-night.png) | ![Playlist picker](docs/screenshots/playlist-night.png) |
 
-The colours follow your Qt theme, so on your desktop it will look like your other apps.
+Pick Night, Day or System in Settings, and turn on Reduce motion to stop the glow animation.
 
 ---
 
