@@ -93,15 +93,25 @@
     <string name="settings_speed_invalid">Not saved yet. Use a number with a capital K, M or G, like 2M or 500K, or leave it empty.</string>
     <string name="settings_accounts">Accounts</string>
     <string name="settings_accounts_help">Needed for Instagram stories and private posts. Elisium only uses the cookies for the site you download from.</string>
-    <string name="settings_accounts_none">No cookies imported.</string>
+    <string name="settings_accounts_none">Not signed in.</string>
+    <string name="settings_accounts_signed_in">Signed in to Instagram</string>
+    <string name="settings_accounts_sign_in">Sign in to Instagram</string>
+    <string name="settings_accounts_sign_in_for">Open Instagram\'s own sign-in page on this phone</string>
+    <string name="settings_accounts_sign_in_failed">The sign-in did not finish. Try again.</string>
+    <string name="settings_accounts_sign_out">Sign out</string>
+    <string name="settings_accounts_sign_out_for">Sign out of Instagram and remove the session kept on this phone</string>
+    <string name="settings_accounts_advanced">Advanced: import cookies.txt</string>
+    <string name="settings_accounts_advanced_show">Show the cookies.txt import</string>
+    <string name="settings_accounts_advanced_hide">Hide the cookies.txt import</string>
+    <string name="settings_accounts_expanded">Expanded</string>
+    <string name="settings_accounts_collapsed">Collapsed</string>
+    <string name="settings_accounts_file_none">No cookies.txt imported.</string>
     <plurals name="settings_accounts_imported">
         <item quantity="one">Imported (%1$d cookie)</item>
         <item quantity="other">Imported (%1$d cookies)</item>
     </plurals>
     <string name="settings_accounts_import">Import cookies.txt</string>
     <string name="settings_accounts_import_for">Pick a cookies.txt file exported on a computer</string>
-    <string name="settings_accounts_remove">Remove</string>
-    <string name="settings_accounts_remove_for">Remove the imported cookies</string>
     <string name="settings_accounts_empty">That file has no cookies in it. Sign in to the site in your browser, export cookies.txt again, then pick the new file.</string>
     <string name="settings_accounts_wrong_format">That file is not a cookies.txt file. Export one with a cookies.txt browser extension on a computer, then copy it to this phone.</string>
     <string name="settings_accounts_how">How to get the file: on a computer, add a cookies.txt extension to your browser, sign in to Instagram there, export the cookies for instagram.com, then copy the file to this phone and pick it here. The file stays on this phone and is never included in a backup.</string>
@@ -117,7 +127,19 @@
     <string name="about_ytdlp">Download engine: yt-dlp %1$s</string>
     <string name="about_ytdlp_starting">Download engine: starting</string>
     <string name="about_ytdlp_failed">Download engine: failed to start</string>
+    <string name="update_ytdlp">Update yt-dlp</string>
+    <string name="update_ytdlp_for">Update yt-dlp, the download engine, to the latest stable version</string>
+    <string name="update_ytdlp_running">Updating yt-dlp\u2026</string>
+    <string name="update_ytdlp_busy_downloads">Update is available when no download is running.</string>
+    <string name="update_ytdlp_updated">Updated to %1$s</string>
+    <string name="update_ytdlp_up_to_date">Already up to date (%1$s)</string>
+    <string name="update_ytdlp_failed">Update failed: %1$s, try again later</string>
     <string name="about_folder">Finished files are saved in your phone\'s Download folder, inside a folder called Elisium.</string>
+
+    <!-- Sign in to Instagram (in-app WebView) -->
+    <string name="instagram_login_title">Sign in to Instagram</string>
+    <string name="instagram_login_back">Back</string>
+    <string name="instagram_login_explainer">You sign in on Instagram\'s own page. Elisium never sees your password; it only keeps the session on this phone. If you download a lot, use a spare account.</string>
 
     <!-- Permissions -->
     <string name="perm_notifications_reason">Elisium can tell you when your downloads are done, even if you have left the app. Allow notifications to get that. Downloads work either way.</string>

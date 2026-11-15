@@ -527,7 +527,8 @@ class DownloadQueue(
         try {
             info = backend.probe(e.url, activeCookiesFile())
         } catch (f: ProbeFailure) {
-            error = explain(f.errorText)
+            // Same wording rules as a failed download: the site, not "Instagram".
+            error = explain(f.errorText, e.url, activeCookiesFile() != null)
         } catch (c: CancellationException) {
             throw c
         } catch (_: Exception) {
@@ -733,7 +734,7 @@ class DownloadQueue(
             }
             return null
         }
-        return explain(outcome.errorLog)
+        return explain(outcome.errorLog, e.url, cookies != null)
     }
 
     private fun onProgress(e: Entry, token: Any, p: Progress) {

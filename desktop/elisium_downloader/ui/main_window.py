@@ -59,6 +59,7 @@ from .playlist_dialog import PlaylistDialog
 from .quality_dialog import QualityDialog
 from .settings import Settings
 from .settings_page import SettingsPage
+from .sign_in_dialog import SignInDialog
 from .tray import TrayController, tray_wanted
 from .model import COLUMNS, DownloadModel
 from .quality_dialog import dialog_scale, font_scale
@@ -75,7 +76,9 @@ CANCELLABLE = frozenset(
 )
 RETRYABLE = frozenset({"failed", "cancelled"})
 # Failures that Settings > Accounts fixes (see engine/errors.py).
-SIGN_IN_CODES = frozenset({"sign_in_required", "login_required"})
+SIGN_IN_CODES = frozenset(
+    {"sign_in_required", "login_required", "session_expired", "http_401"}
+)
 SECTIONS = ("Downloads", "History", "Settings")
 ACTIVE = frozenset({"probing", "downloading", "merging", "converting"})
 
@@ -416,6 +419,7 @@ class MainWindow(QMainWindow):
         probe_fn: Callable[[str], dict[str, Any]] | None = None,
         thumbnail_fetcher: Callable[..., None] | None = None,
         tray_factory: Callable[[MainWindow], TrayController | None] | None = None,
+        detect_fn: Callable[[], list[str]] | None = None,
     ) -> None:
         """``tray_factory(window)`` builds the tray controller (or returns ``None``).
 
@@ -435,6 +439,8 @@ class MainWindow(QMainWindow):
         self.settings = settings or Settings()
         self._settings_path = settings_path
         self._version_fn = version_fn
+        self._detect_fn = detect_fn
+        self.sign_in_dialog: SignInDialog | None = None
         self.setWindowTitle("Elisium")
         self.resize(900, 520)
 
@@ -527,7 +533,8 @@ class MainWindow(QMainWindow):
 
         self.history_page = HistoryPage(self.queue, self.bridge)
         self.settings_page = SettingsPage(
-            self.settings, self.queue, self._settings_path, self._version_fn
+            self.settings, self.queue, self._settings_path, self._version_fn,
+            detect_fn=self._detect_fn,
         )
         self.settings_page.settingsChanged.connect(self._on_settings_changed)
         self.stack = QStackedWidget()
@@ -562,6 +569,16 @@ class MainWindow(QMainWindow):
 
         self.summary_label = QLabel()
         self.summary_label.setAccessibleName("Download summary")
+        self.sign_in_button = QPushButton("Sign in...")
+        self.sign_in_button.setFlat(True)
+        self.sign_in_button.setAccessibleName("Sign in")
+        self.sign_in_button.setAccessibleDescription(
+            "Some downloads need a sign-in. Opens a window to choose your browser and retry."
+        )
+        self.sign_in_button.setToolTip("Some downloads need a sign-in")
+        self.sign_in_button.clicked.connect(self.open_sign_in_dialog)
+        self.sign_in_button.hide()
+        self.statusBar().addPermanentWidget(self.sign_in_button)
         self.statusBar().addPermanentWidget(self.summary_label)
         # One zero-height live label: screen readers are told about progress
         # here, at coarse steps only (see ProgressAnnouncer).
@@ -763,6 +780,46 @@ class MainWindow(QMainWindow):
         self.show_section(2)
         self.settings_page.show_accounts()
 
+    def open_sign_in_dialog(self) -> SignInDialog:
+        """Open the small modal sign-in dialog (only from a user action)."""
+        dialog = SignInDialog(
+            self._detect_fn, self,
+            detected=self.settings_page.detected_browsers or None,
+        )
+        dialog.browserChosen.connect(self.settings_page.use_browser)
+        dialog.retryRequested.connect(self.retry_sign_in_failures)
+        dialog.settingsRequested.connect(self.open_accounts)
+        dialog.finished.connect(lambda _r: setattr(self, "sign_in_dialog", None))
+        self.sign_in_dialog = dialog
+        dialog.open()
+        return dialog
+
+    def retry_sign_in_failures(self) -> int:
+        """Retry every failed item whose error needs a sign-in (existing retry path)."""
+        count = 0
+        for snap in self.queue.items():
+            error = snap.get("error") or {}
+            if snap["state"] == "failed" and error.get("code") in SIGN_IN_CODES:
+                if self.queue.retry(snap["id"]):
+                    count += 1
+        if count:
+            self.statusBar().showMessage(
+                f"Retrying {count} download{'s' if count != 1 else ''}", 8000
+            )
+        return count
+
+    def _update_sign_in_hint(self) -> None:
+        needs = False
+        for row in range(self.model.rowCount()):
+            snap = self.model.snapshot_at(row)
+            if (
+                snap is not None and snap["state"] == "failed"
+                and (snap.get("error") or {}).get("code") in SIGN_IN_CODES
+            ):
+                needs = True
+                break
+        self.sign_in_button.setVisible(needs)
+
     # -- model feed ------------------------------------------------------
     def _on_event(self, event: dict[str, Any]) -> None:
         self.model.handle_event(event)
@@ -791,6 +848,7 @@ class MainWindow(QMainWindow):
             )
 
     def _refresh_ui(self) -> None:
+        self._update_sign_in_hint()
         self._update_summary()
         self._update_actions()
 
@@ -1098,9 +1156,9 @@ class MainWindow(QMainWindow):
         error = (self.selected_snapshot() or {}).get("error") or {}
         if error.get("code") in SIGN_IN_CODES:
             sign_in = menu.addAction("Sign in...")
-            sign_in.setToolTip("Choose a browser in Settings > Accounts")
-            sign_in.setStatusTip("Choose a browser in Settings > Accounts")
-            sign_in.triggered.connect(self.open_accounts)
+            sign_in.setToolTip("Pick the browser you are signed in to, then retry")
+            sign_in.setStatusTip("Pick the browser you are signed in to, then retry")
+            sign_in.triggered.connect(self.open_sign_in_dialog)
         menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def build_shortcuts_dialog(self) -> QDialog:

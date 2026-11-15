@@ -78,3 +78,98 @@ def test_new_site_codes() -> None:
 
 def test_empty_log_falls_back() -> None:
     assert explain("").message == "Download failed."
+
+
+# -- brief 9A: context-aware explain ------------------------------------
+IG_POST = "https://www.instagram.com/p/CabcdEFghij/"
+YT_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+LOGIN_RAW = "ERROR: You need to log in to access this content. Use --cookies-from-browser or --cookies"
+
+
+def test_http_401_row() -> None:
+    info = explain("ERROR: unable to download video data: HTTP Error 401: Unauthorized")
+    assert info.code == "http_401"
+    assert info.message == "The site refused to let Elisium in."
+    assert info.fix == "Sign in, then try again"
+    # 401 does not swallow 403 or 429.
+    assert explain("ERROR: HTTP Error 403: Forbidden").code == "http_403"
+    assert explain("ERROR: HTTP Error 429: Too Many Requests").code == "http_429"
+
+
+@pytest.mark.parametrize(
+    "raw_log",
+    [
+        # raise_no_formats('There is no video in this post', expected=True)
+        "ERROR: [Instagram] CabcdEFghij: There is no video in this post",
+        # the empty Polaris response, verbatim from extractor/instagram.py
+        "ERROR: Instagram sent an empty media response. Check if this post is "
+        "accessible in your browser without being logged-in. If it is not, then "
+        "use --cookies-from-browser or --cookies for the authentication.",
+    ],
+)
+def test_no_media_row(raw_log: str) -> None:
+    info = explain(raw_log)
+    assert info.code == "no_media"
+    assert info.message == "This post has no video to download."
+    assert info.fix == "Check the link"
+
+
+def test_no_media_does_not_shadow_login_required() -> None:
+    # The empty-response message mentions cookies but is not a sign-in failure.
+    info = explain(
+        "ERROR: Instagram sent an empty media response. ... use --cookies-from-browser",
+        IG_POST,
+        True,
+    )
+    assert info.code == "no_media"
+    assert explain(LOGIN_RAW, IG_POST, True).code == "session_expired"
+
+
+def test_login_required_is_generic_for_other_sites() -> None:
+    info = explain(LOGIN_RAW, YT_URL)
+    assert info.code == "login_required"
+    assert info.message == "The site wants you to be signed in."
+    assert info.fix == "Choose a browser in Settings > Accounts"
+    # An Instagram URL, and no URL at all, keep the Instagram wording.
+    assert explain(LOGIN_RAW, IG_POST).message == "Instagram needs you signed in."
+    assert explain(LOGIN_RAW).message == "Instagram needs you signed in."
+    assert explain(LOGIN_RAW, None).message == "Instagram needs you signed in."
+
+
+def test_rate_limited_is_generic_for_other_sites() -> None:
+    raw = "ERROR: Please wait a few minutes before you try again."
+    other = explain(raw, YT_URL)
+    assert other.code == "rate_limited"
+    assert other.message == (
+        "The site is limiting requests. Wait a few minutes and try again."
+    )
+    assert other.fix == "Wait a few minutes and try again"
+    assert explain(raw, IG_POST).message == (
+        "Instagram is limiting requests. Wait a few minutes and try again."
+    )
+    assert explain(raw).message == (
+        "Instagram is limiting requests. Wait a few minutes and try again."
+    )
+
+
+def test_expired_session_only_with_cookies_on_instagram() -> None:
+    expired = explain(LOGIN_RAW, IG_POST, True)
+    assert expired.code == "session_expired"
+    assert expired.message == "Your Instagram sign-in has expired."
+    assert expired.fix == "Choose your browser again in Settings > Accounts"
+    # No cookies configured: it is still a plain "sign in" failure.
+    assert explain(LOGIN_RAW, IG_POST, False).code == "login_required"
+    assert explain(LOGIN_RAW, IG_POST).code == "login_required"
+    # No URL: an Instagram-only row, so cookies still mean an expired session.
+    assert explain(LOGIN_RAW, hasCookies=True).code == "session_expired"
+    # Another site never gets "your Instagram sign-in has expired".
+    other = explain(LOGIN_RAW, YT_URL, True)
+    assert other.code == "login_required"
+    assert "Instagram" not in other.message
+
+
+@pytest.mark.parametrize("raw_log", [LOGIN_RAW, "HTTP Error 401", "HTTP Error 403", ""])
+def test_default_arguments_keep_the_old_behaviour(raw_log: str) -> None:
+    assert explain(raw_log) == explain(raw_log, None, False)
+    assert explain(raw_log) == explain(raw_log, url=None, hasCookies=False)
+

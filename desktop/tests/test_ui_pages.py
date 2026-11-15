@@ -377,3 +377,170 @@ def test_create_app_loads_and_applies_settings(qapp, tmp_path) -> None:
         win.bridge.close()
         queue.stop(1.0)
         queue.history.close()
+
+
+# -- browser auto-detect (Accounts hint and the sign-in dialog) -------------
+def detected_page(ui_queue, found, tmp_path, **kw):
+    page = SettingsPage(
+        st.Settings(**kw), ui_queue, tmp_path / "s.json", lambda: "1", detect_fn=lambda: found
+    )
+    assert wait_until(lambda: page.detected_browsers == found)
+    page.show()
+    pump()
+    return page
+
+
+def test_accounts_hint_appears_and_use_firefox_persists_and_applies(qapp, ui_queue, tmp_path) -> None:
+    page = detected_page(ui_queue, ["firefox", "chrome"], tmp_path)
+    assert page.detect_row.isVisible()
+    assert page.detect_label.text() == "Signed in to Instagram in Firefox."
+    assert page.detect_button.text() == "Use Firefox"
+    assert page.detect_button.accessibleName() == "Use Firefox"
+    page.detect_button.click()
+    assert page.cookies_combo.currentData() == "firefox"
+    assert ui_queue._cookies_browser == "firefox"
+    assert json.loads((tmp_path / "s.json").read_text())["cookies_browser"] == "firefox"
+    assert not page.detect_row.isVisible()  # configured now: hint goes away
+    page.hide()
+
+
+def test_accounts_hint_hidden_when_nothing_detected_or_already_configured(qapp, ui_queue, tmp_path) -> None:
+    none = detected_page(ui_queue, [], tmp_path)
+    assert not none.detect_row.isVisible()
+    none.hide()
+    configured = detected_page(ui_queue, ["firefox"], tmp_path, cookies_browser="chrome")
+    assert not configured.detect_row.isVisible()
+    configured.hide()
+    with_file = detected_page(ui_queue, ["firefox"], tmp_path, cookies_file="/tmp/c.txt")
+    assert not with_file.detect_row.isVisible()
+    with_file.hide()
+    shown = detected_page(ui_queue, ["firefox"], tmp_path)
+    assert shown.detect_row.isVisible()
+    shown.cookies_combo.setCurrentIndex(shown.cookies_combo.findData("brave"))
+    assert not shown.detect_row.isVisible()
+    shown.cookies_combo.setCurrentIndex(0)  # back to "Not signed in": offered again
+    assert shown.detect_row.isVisible()
+    shown.hide()
+
+
+def test_detection_failure_means_not_detected(qapp, ui_queue, tmp_path) -> None:
+    def boom() -> list[str]:
+        raise RuntimeError("nope")
+
+    page = SettingsPage(st.Settings(), ui_queue, None, lambda: "1", detect_fn=boom)
+    pump(100)
+    assert page.detected_browsers == []
+
+
+def test_update_ytdlp_hint_text(spage) -> None:
+    assert spage.update_hint.text() == "If Instagram stops working, update yt-dlp (pacman -Syu / pip)"
+
+
+@pytest.fixture
+def sign_window(qapp, ui_queue, tmp_path):
+    win = MainWindow(
+        ui_queue, settings_path=tmp_path / "s.json", version_fn=lambda: "1",
+        detect_fn=lambda: ["firefox", "brave"],
+    )
+    yield win
+    win.bridge.close()
+    win.deleteLater()
+
+
+def _fail(queue, url: str, code: str) -> int:
+    from elisium_downloader.engine.errors import ErrorInfo
+
+    snap = queue.add(url)
+    with queue._cond:
+        item = queue._items[snap["id"]]
+        info = ErrorInfo("Sign in needed." if code != "unknown" else "Broke.", "fix", code)
+        item.error = info
+        queue._set_state(item, "failed", error=info)
+    return snap["id"]
+
+
+def test_sign_in_dialog_retries_only_sign_in_failures(sign_window, ui_queue, tmp_path) -> None:
+    signed = _fail(ui_queue, "https://example.com/a", "login_required")
+    expired = _fail(ui_queue, "https://example.com/b", "session_expired")
+    other = _fail(ui_queue, "https://example.com/c", "unknown")
+    sign_window.show()
+    pump()
+    assert wait_until(lambda: sign_window.sign_in_button.isVisible())
+    dialog = sign_window.open_sign_in_dialog()
+    assert wait_until(lambda: dialog.use_button.isVisible() or dialog.browser_combo.count() == 2)
+    assert dialog.isModal()
+    assert [dialog.browser_combo.itemData(i) for i in range(2)] == ["firefox", "brave"]
+    assert dialog.settings_button.text() == "Open Settings > Accounts"
+    dialog.browser_combo.setCurrentIndex(1)
+    dialog.use_button.click()
+    assert ui_queue._cookies_browser == "brave"
+    assert json.loads((tmp_path / "s.json").read_text())["cookies_browser"] == "brave"
+    assert ui_queue.item(signed)["state"] == "queued"
+    assert ui_queue.item(expired)["state"] == "queued"
+    assert ui_queue.item(other)["state"] == "failed"
+    pump()
+    assert sign_window.sign_in_dialog is None
+    sign_window.hide()
+
+
+def test_sign_in_dialog_with_nothing_detected(qapp, ui_queue, tmp_path) -> None:
+    win = MainWindow(ui_queue, settings_path=tmp_path / "s.json", version_fn=lambda: "1",
+                     detect_fn=lambda: [])
+    try:
+        sid = _fail(ui_queue, "https://example.com/a", "http_401")
+        dialog = win.open_sign_in_dialog()
+        assert wait_until(lambda: "No signed-in browser" in dialog.status_label.text())
+        assert not dialog.browser_combo.isVisibleTo(dialog)
+        assert not dialog.use_button.isVisibleTo(dialog)
+        assert dialog.retry_button.isVisibleTo(dialog)
+        assert dialog.settings_button.isVisibleTo(dialog)
+        dialog.retry_button.click()
+        assert ui_queue.item(sid)["state"] == "queued"
+        assert ui_queue._cookies_browser is None  # retry alone changes no settings
+    finally:
+        win.bridge.close()
+        win.deleteLater()
+
+
+def test_sign_in_dialog_settings_button_opens_accounts(sign_window) -> None:
+    sign_window.show()
+    dialog = sign_window.open_sign_in_dialog()
+    pump()
+    dialog.settings_button.click()
+    pump()
+    assert sign_window.stack.currentIndex() == 2
+    assert sign_window.settings_page.focusWidget() is sign_window.settings_page.cookies_combo
+    sign_window.hide()
+
+
+def test_sign_in_dialog_is_keyboard_operable_and_named(sign_window) -> None:
+    dialog = sign_window.open_sign_in_dialog()
+    assert wait_until(lambda: dialog.browser_combo.count() == 2)
+    assert dialog.accessibleName() == "Sign in"
+    for widget, name in (
+        (dialog.browser_combo, "Signed-in browser"),
+        (dialog.use_button, "Use this browser and retry"),
+        (dialog.settings_button, "Open Settings, Accounts"),
+        (dialog.close_button, "Close"),
+        (dialog.status_label, "Detection result"),
+    ):
+        assert widget.accessibleName() == name
+        assert widget.focusPolicy() != Qt.FocusPolicy.NoFocus or widget is dialog.status_label
+    assert dialog.use_button.isDefault()
+    assert "Sign in to Instagram in your browser, then come back and retry" in dialog.intro.text()
+    dialog.close_button.click()
+    assert not dialog.isVisible()
+
+
+def test_sign_in_hint_button_and_menu_entry(sign_window, ui_queue) -> None:
+    sign_window.show()
+    pump()
+    assert not sign_window.sign_in_button.isVisible()
+    _fail(ui_queue, "https://example.com/a", "login_required")
+    assert wait_until(lambda: sign_window.sign_in_button.isVisible())
+    assert sign_window.sign_in_button.accessibleName() == "Sign in"
+    assert sign_window.sign_in_dialog is None  # never opens by itself
+    sign_window.sign_in_button.click()
+    assert sign_window.sign_in_dialog is not None
+    sign_window.sign_in_dialog.close_button.click()
+    sign_window.hide()

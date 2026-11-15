@@ -47,6 +47,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationManagerCompat
@@ -83,6 +84,7 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
     focusAccounts: Boolean = false,
     onAccountsShown: () -> Unit = {},
+    onSignIn: () -> Unit = {},
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -119,6 +121,8 @@ fun SettingsScreen(
         onRemoveCookies = vm::removeCookies,
         focusAccounts = focusAccounts,
         onAccountsShown = onAccountsShown,
+        onSignIn = onSignIn,
+        onUpdateYtDlp = vm::updateYtDlp,
         modifier = modifier,
     )
 }
@@ -176,6 +180,8 @@ fun SettingsContent(
     onSpeedLimitDone: () -> Unit = {},
     onImportCookies: () -> Unit = {},
     onRemoveCookies: () -> Unit = {},
+    onSignIn: () -> Unit = {},
+    onUpdateYtDlp: () -> Unit = {},
     focusAccounts: Boolean = false,
     onAccountsShown: () -> Unit = {},
 ) {
@@ -291,26 +297,26 @@ fun SettingsContent(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            val imported = state.cookies is CookiesStatus.Imported
+            // The count stays out of the main line; it belongs to the cookies.txt in Advanced.
             Text(
-                text = when (val cookies = state.cookies) {
-                    CookiesStatus.None -> stringResource(R.string.settings_accounts_none)
-                    is CookiesStatus.Imported ->
-                        pluralStringResource(R.plurals.settings_accounts_imported, cookies.count, cookies.count)
-                },
+                text = stringResource(
+                    if (imported) R.string.settings_accounts_signed_in else R.string.settings_accounts_none,
+                ),
                 style = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
             )
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 ElisiumButton(
-                    stringResource(R.string.settings_accounts_import),
-                    onImportCookies,
-                    description = stringResource(R.string.settings_accounts_import_for),
+                    stringResource(R.string.settings_accounts_sign_in),
+                    onSignIn,
+                    description = stringResource(R.string.settings_accounts_sign_in_for),
                 )
-                if (state.cookies is CookiesStatus.Imported) {
+                if (imported) {
                     ElisiumOutlinedButton(
-                        stringResource(R.string.settings_accounts_remove),
+                        stringResource(R.string.settings_accounts_sign_out),
                         onRemoveCookies,
-                        description = stringResource(R.string.settings_accounts_remove_for),
+                        description = stringResource(R.string.settings_accounts_sign_out_for),
                     )
                 }
             }
@@ -328,11 +334,44 @@ fun SettingsContent(
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                 )
             }
-            Text(
-                stringResource(R.string.settings_accounts_how),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            // The old, harder way (a cookies.txt exported on a computer) is kept, but out of the way.
+            var advanced by remember { mutableStateOf(false) }
+            val expandedWord = stringResource(
+                if (advanced) R.string.settings_accounts_expanded else R.string.settings_accounts_collapsed,
             )
+            ElisiumOutlinedButton(
+                text = stringResource(R.string.settings_accounts_advanced),
+                onClick = { advanced = !advanced },
+                description = stringResource(
+                    if (advanced) R.string.settings_accounts_advanced_hide else R.string.settings_accounts_advanced_show,
+                ),
+                modifier = Modifier.semantics { stateDescription = expandedWord },
+            )
+            if (advanced) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val cookies = state.cookies
+                    Text(
+                        text = if (cookies is CookiesStatus.Imported) {
+                            pluralStringResource(R.plurals.settings_accounts_imported, cookies.count, cookies.count)
+                        } else {
+                            stringResource(R.string.settings_accounts_file_none)
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                    )
+                    ElisiumButton(
+                        stringResource(R.string.settings_accounts_import),
+                        onImportCookies,
+                        description = stringResource(R.string.settings_accounts_import_for),
+                    )
+                    Text(
+                        stringResource(R.string.settings_accounts_how),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
 
         Section(R.string.settings_network) {
@@ -360,6 +399,27 @@ fun SettingsContent(
                 },
                 style = MaterialTheme.typography.bodyLarge,
             )
+            ElisiumOutlinedButton(
+                text = stringResource(R.string.update_ytdlp),
+                onClick = onUpdateYtDlp,
+                enabled = engine is EngineState.Ready && state.canUpdate,
+                description = stringResource(R.string.update_ytdlp_for),
+            )
+            val updateLine = when (val u = state.update) {
+                UpdateUi.Idle -> if (state.downloadsActive) stringResource(R.string.update_ytdlp_busy_downloads) else null
+                UpdateUi.Running -> stringResource(R.string.update_ytdlp_running)
+                is UpdateUi.Updated -> stringResource(R.string.update_ytdlp_updated, u.version)
+                is UpdateUi.UpToDate -> stringResource(R.string.update_ytdlp_up_to_date, u.version)
+                is UpdateUi.Failed -> stringResource(R.string.update_ytdlp_failed, u.reason)
+            }
+            if (updateLine != null) {
+                Text(
+                    text = updateLine,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (state.update is UpdateUi.Failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                )
+            }
             Text(stringResource(R.string.about_folder), style = MaterialTheme.typography.bodyLarge)
         }
     }

@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.CreationExtras
 import com.desolate.elisium.ElisiumApp
 import com.desolate.elisium.R
+import com.desolate.elisium.engine.ACTIVE_STATES
 import com.desolate.elisium.engine.QueueItem
 import com.desolate.elisium.ui.downloads.QueueGateway
 import com.desolate.elisium.ui.downloads.QueueViewModel
@@ -17,6 +18,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -53,7 +55,17 @@ class ElisiumViewModel(val app: ElisiumApp) : ViewModel() {
         scope = viewModelScope,
         io = Dispatchers.IO,
     )
-    val settings = SettingsViewModel(app.settingsRepository, viewModelScope, cookies = app.cookieJar)
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val downloadsActive: Flow<Boolean> = app.coordinator.flatMapLatest { c ->
+        c?.queue?.items?.map { items -> items.any { it.state in ACTIVE_STATES || it.state == "queued" } } ?: flowOf(false)
+    }
+    val settings = SettingsViewModel(
+        app.settingsRepository,
+        viewModelScope,
+        cookies = app.cookieJar,
+        updates = app.ytDlpUpdates,
+        downloadsActive = downloadsActive,
+    )
 
     private val extraMessages = kotlinx.coroutines.channels.Channel<String>(kotlinx.coroutines.channels.Channel.BUFFERED)
 

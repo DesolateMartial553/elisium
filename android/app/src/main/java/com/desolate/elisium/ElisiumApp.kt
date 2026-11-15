@@ -2,6 +2,12 @@ package com.desolate.elisium
 
 import android.app.Application
 import com.desolate.elisium.backend.LibraryYtDlpRunner
+import com.desolate.elisium.backend.LibraryYtDlpUpdater
+import com.desolate.elisium.backend.UpdateResult
+import com.desolate.elisium.backend.YtDlpUpdateService
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import com.desolate.elisium.engine.ACTIVE_STATES
 import com.desolate.elisium.backend.YoutubeDlBackend
 import com.desolate.elisium.data.AppDatabase
 import com.desolate.elisium.data.RoomHistoryStore
@@ -87,7 +93,45 @@ class ElisiumApp : Application() {
                 // "engine failed" state, not kill the app.
                 EngineState.Failed(e.message ?: e.javaClass.simpleName)
             }
+            if (_engine.value is EngineState.Ready) autoUpdateYtDlp()
         }
+    }
+
+    /** One update at a time, shared by the startup check and the Settings button. */
+    val ytDlpUpdates: YtDlpUpdateService by lazy {
+        YtDlpUpdateService(
+            updater = LibraryYtDlpUpdater(this),
+            store = settingsRepository,
+            onResult = { result ->
+                // After an update the shown version must follow; a failure changes nothing.
+                if (result is UpdateResult.Updated && _engine.value is EngineState.Ready) {
+                    _engine.value = EngineState.Ready(result.version)
+                }
+            },
+        )
+    }
+
+    /** True while any download is running or waiting (the queue is null before the engine is ready). */
+    fun downloadsActive(): Boolean =
+        queue?.items?.value?.any { it.state in ACTIVE_STATES || it.state == "queued" } == true
+
+    /** Startup check: runs once, off the main thread, only when the policy allows; failures stay silent. */
+    private suspend fun autoUpdateYtDlp() {
+        try {
+            val result = ytDlpUpdates.autoUpdateIfDue(onWifi = onUnmeteredNetwork(), downloadsActive = downloadsActive())
+            if (result is UpdateResult.Failed) Log.w("Elisium", "yt-dlp auto-update failed: ${result.reason}")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            Log.w("Elisium", "yt-dlp auto-update skipped: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /** Same notion of "on Wi-Fi" as the Wi-Fi-only download gate: the active network is not metered. */
+    private fun onUnmeteredNetwork(): Boolean {
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return false
+        val caps = cm.activeNetwork?.let { cm.getNetworkCapabilities(it) } ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
     }
 
     /** History over Room; usable before the engine is ready (it only needs the database). */

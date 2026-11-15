@@ -31,7 +31,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from . import runner
 from .archive import Archive, _file_exists, reconcile
-from .errors import ErrorInfo, explain
+from .errors import ErrorInfo, apply_context, explain
 from .history import History, TERMINAL_STATES
 from .urlnorm import normalize_url, video_key
 
@@ -272,6 +272,11 @@ class DownloadQueue:
         with self._cond:
             self._cookies_browser = str(browser) if browser else None
             self._cookies_file = None if file is None else str(file)
+
+    def _cookies_configured(self) -> bool:
+        """True when a browser or a cookies file is set (contents never read)."""
+        with self._cond:
+            return bool(self._cookies_browser or self._cookies_file)
 
     def add_listener(self, callback: Callable[[dict[str, Any]], None]) -> None:
         with self._lock:
@@ -680,7 +685,8 @@ class DownloadQueue:
         try:
             info = self.probe(item.url)
         except runner.ProbeError as exc:
-            error = exc.info
+            # Same wording rules as a failed download: the site, not "Instagram".
+            error = apply_context(exc.info, item.url, self._cookies_configured())
         except OSError:  # pragma: no cover - defensive
             error = _UNKNOWN
         else:
@@ -816,7 +822,7 @@ class DownloadQueue:
                 self._set_state(item, "done", file_path=path)
             return None, raw
         self._discard(path_file)
-        return explain(raw), raw
+        return explain(raw, item.url, self._cookies_configured()), raw
 
     @staticmethod
     def _read_path_file(path_file: Path) -> str | None:

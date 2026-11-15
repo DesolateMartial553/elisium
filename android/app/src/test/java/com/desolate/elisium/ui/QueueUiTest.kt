@@ -116,7 +116,8 @@ class QueueUiTest {
     }
 
     @Test fun signInFailuresOfferTheAccountsShortcut() {
-        for (code in listOf("sign_in_required", "login_required")) {
+        // Brief 9A: an expired session and a 401 are fixed in Settings > Accounts too.
+        for (code in listOf("sign_in_required", "login_required", "session_expired", "http_401")) {
             val row = queueItem(state = "failed", error = ErrorInfo("Instagram needs you signed in.", "Import cookies in Settings > Accounts", code))
                 .toRowModel()
             assertEquals(listOf(RowAction.Retry, RowAction.SignIn), row.actions)

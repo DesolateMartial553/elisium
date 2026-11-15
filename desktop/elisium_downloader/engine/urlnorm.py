@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-__all__ = ["normalize_url", "video_key"]
+__all__ = ["normalize_url", "site_kind", "video_key"]
 
 _YOUTUBE_HOSTS = {"youtube.com", "youtube-nocookie.com"}
 _SHORT_HOST = "youtu.be"
@@ -26,6 +26,8 @@ _TIME_RE = re.compile(r"^(?:\d+h)?(?:\d+m)?(?:\d+s)?$")
 _INSTAGRAM_HOST = "instagram.com"
 # The short hosts are their own domain, so they are matched before the suffix.
 _TIKTOK_HOSTS = {"tiktok.com", "vm.tiktok.com", "vt.tiktok.com"}
+# Share links: the code alone identifies one video (never resolved, no network).
+_TIKTOK_SHORT_HOSTS = {"vm.tiktok.com", "vt.tiktok.com"}
 
 # Dropped on every site / every YouTube URL.
 _TRACKING_PARAMS = {"si", "feature", "pp"}
@@ -188,6 +190,12 @@ def _instagram_key(parts) -> str | None:
         if _VIDEO_ID_RE.fullmatch(shortcode):
             return f"instagram:{shortcode}"
         return None
+    if len(segments) >= 3 and segments[0] == "stories" and segments[1] == "highlights":
+        # One highlight (the tray itself is classified elsewhere, unchanged).
+        highlight_id = segments[2]
+        if highlight_id.isdigit():
+            return f"instagram:highlight:{highlight_id}"
+        return None
     if (
         len(segments) >= 3
         and segments[0] == "stories"
@@ -199,8 +207,13 @@ def _instagram_key(parts) -> str | None:
     return None
 
 
-def _tiktok_key(parts) -> str | None:
+def _tiktok_key(parts, host: str) -> str | None:
     segments = [seg for seg in parts.path.split("/") if seg]
+    if _bare_host(host) in _TIKTOK_SHORT_HOSTS:
+        # Short links are never resolved (no network): the code is the identity.
+        if segments and _VIDEO_ID_RE.fullmatch(segments[0]):
+            return f"tiktok:short:{segments[0]}"
+        return None
     if len(segments) >= 3 and segments[0].startswith("@") and segments[1] == "video":
         video_id = segments[2]
         if video_id.isdigit():
@@ -239,6 +252,19 @@ def normalize_url(url: str) -> str:
     return urlunsplit((scheme, netloc, parts.path, query, ""))
 
 
+def site_kind(url: str) -> str | None:
+    """``"instagram"`` / ``"tiktok"`` for a URL on those sites, else ``None``.
+
+    Never raises: an unparseable URL has no known site. Same host rules as
+    :func:`normalize_url`, so callers can pick wording per site.
+    """
+    try:
+        parts = _split(url)
+    except (ValueError, TypeError):
+        return None
+    return _site_kind(parts.hostname or "")
+
+
 def video_key(url: str) -> str | None:
     """Return ``"youtube:<ID>"``, ``"instagram:..."``, ``"tiktok:<id>"`` or ``None``."""
     parts = _split(url)
@@ -253,5 +279,5 @@ def video_key(url: str) -> str | None:
     if site == "instagram":
         return _instagram_key(parts)
     if site == "tiktok":
-        return _tiktok_key(parts)
+        return _tiktok_key(parts, host)
     return None

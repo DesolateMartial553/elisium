@@ -1,6 +1,8 @@
 package com.desolate.elisium.engine
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -19,7 +21,7 @@ class ErrorsTest {
             Triple(
                 "ERROR: unable to download video data: HTTP Error 403: Forbidden",
                 "The site refused the download.",
-                "Update yt-dlp, or import cookies",
+                "Update yt-dlp in Settings, or sign in",
             ),
             Triple("ERROR: HTTP Error 429: Too Many Requests", "Too many requests.", "Wait, lower concurrency"),
             Triple("ERROR: Unable to download webpage: timed out", "Network problem.", "Retry (auto-retry already ran)"),
@@ -79,7 +81,8 @@ class ErrorsTest {
         )) {
             val info = explain(raw)
             assertEquals(raw, "cookies_unreadable", info.code)
-            assertTrue(raw, info.fix.contains("Settings > Accounts"))
+            // Brief 9B: the fix is one tap inside the app, not a file copied from a computer.
+            assertEquals(raw, "Sign in to Instagram in Settings > Accounts", info.fix)
         }
     }
 
@@ -89,5 +92,99 @@ class ErrorsTest {
         assertEquals("login_required", explain("You need to log in to access this content").code)
         // A plain HTTP 429 on another site is still the generic row.
         assertEquals("http_429", explain("ERROR: HTTP Error 429: Too Many Requests").code)
+    }
+
+    // -- brief 9A: context-aware explain ------------------------------------------------
+    private val igPost = "https://www.instagram.com/p/CabcDEF123/"
+    private val ytUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    private val loginRaw =
+        "ERROR: You need to log in to access this content. Use --cookies-from-browser or --cookies"
+
+    @Test
+    fun `http 401 maps to its own row`() {
+        val info = explain("ERROR: unable to download video data: HTTP Error 401: Unauthorized")
+        assertEquals("http_401", info.code)
+        assertEquals("The site refused to let Elisium in.", info.message)
+        assertEquals("Sign in, then try again", info.fix)
+        assertEquals("http_403", explain("ERROR: HTTP Error 403: Forbidden").code)
+        assertEquals("http_429", explain("ERROR: HTTP Error 429: Too Many Requests").code)
+    }
+
+    @Test
+    fun `a post with no video maps to no media`() {
+        for (raw in listOf(
+            // raise_no_formats("There is no video in this post", expected = true)
+            "ERROR: [Instagram] CabcDEF123: There is no video in this post",
+            // the empty Polaris response, verbatim from extractor/instagram.py
+            "ERROR: Instagram sent an empty media response. Check if this post is accessible in your " +
+                "browser without being logged-in. If it is not, then use --cookies-from-browser or " +
+                "--cookies for the authentication.",
+        )) {
+            val info = explain(raw)
+            assertEquals(raw, "no_media", info.code)
+            assertEquals(raw, "This post has no video to download.", info.message)
+            assertEquals(raw, "Check the link", info.fix)
+        }
+        // The empty-response text mentions cookies but is not a sign-in failure.
+        assertEquals(
+            "no_media",
+            explain("ERROR: Instagram sent an empty media response. ... use --cookies-from-browser", igPost, true).code,
+        )
+        assertEquals("session_expired", explain(loginRaw, igPost, true).code)
+    }
+
+    @Test
+    fun `login required is generic for other sites`() {
+        val info = explain(loginRaw, ytUrl)
+        assertEquals("login_required", info.code)
+        assertEquals("The site wants you to be signed in.", info.message)
+        assertEquals("Sign in to Instagram in Settings > Accounts", info.fix)
+        // An Instagram URL, and no URL at all, keep the Instagram wording.
+        assertEquals("Instagram needs you signed in.", explain(loginRaw, igPost).message)
+        assertEquals("Instagram needs you signed in.", explain(loginRaw).message)
+        assertEquals("Instagram needs you signed in.", explain(loginRaw, null).message)
+    }
+
+    @Test
+    fun `rate limited is generic for other sites`() {
+        val raw = "ERROR: Please wait a few minutes before you try again."
+        val other = explain(raw, ytUrl)
+        assertEquals("rate_limited", other.code)
+        assertEquals("The site is limiting requests. Wait a few minutes and try again.", other.message)
+        assertEquals("Wait a few minutes and try again", other.fix)
+        assertEquals(
+            "Instagram is limiting requests. Wait a few minutes and try again.",
+            explain(raw, igPost).message,
+        )
+        assertEquals(
+            "Instagram is limiting requests. Wait a few minutes and try again.",
+            explain(raw).message,
+        )
+    }
+
+    @Test
+    fun `expired session needs cookies and instagram`() {
+        val expired = explain(loginRaw, igPost, true)
+        assertEquals("session_expired", expired.code)
+        assertEquals("Your Instagram sign-in has expired.", expired.message)
+        assertEquals("Sign in to Instagram in Settings > Accounts", expired.fix)
+        // No cookies configured: still a plain sign-in failure.
+        assertEquals("login_required", explain(loginRaw, igPost, false).code)
+        assertEquals("login_required", explain(loginRaw, igPost).code)
+        // No URL: an Instagram-only row, so cookies still mean an expired session.
+        assertEquals("session_expired", explain(loginRaw, hasCookies = true).code)
+        // Another site never gets "your Instagram sign-in has expired".
+        val other = explain(loginRaw, ytUrl, true)
+        assertEquals("login_required", other.code)
+        assertFalse(other.message.contains("Instagram"))
+        assertNotEquals("session_expired", other.code)
+    }
+
+    @Test
+    fun `default arguments keep the old behaviour`() {
+        for (raw in listOf(loginRaw, "HTTP Error 401", "HTTP Error 403", "")) {
+            assertEquals(raw, explain(raw), explain(raw, null, false))
+            assertEquals(raw, explain(raw), explain(raw, url = null, hasCookies = false))
+        }
     }
 }

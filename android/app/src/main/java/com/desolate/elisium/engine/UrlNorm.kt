@@ -20,6 +20,9 @@ private const val INSTAGRAM_HOST = "instagram.com"
 /** The TikTok short hosts are their own domain, so they are matched before any suffix rule. */
 private val TIKTOK_HOSTS = setOf("tiktok.com", "vm.tiktok.com", "vt.tiktok.com")
 
+/** Share links: the code alone identifies one video (never resolved, no network). */
+private val TIKTOK_SHORT_HOSTS = setOf("vm.tiktok.com", "vt.tiktok.com")
+
 // Share-link parameters added by the Instagram app / web share sheet. `img_index` is
 // deliberately kept: it selects one image of a carousel post.
 private val INSTAGRAM_DROP = setOf("igsh", "igshid")
@@ -244,7 +247,7 @@ private fun hostKind(host: String): String? {
 }
 
 /** "instagram", "tiktok" for those sites, else null. */
-private fun siteKind(host: String): String? {
+private fun siteKindOfHost(host: String): String? {
     val h = bareHost(host)
     if (h == INSTAGRAM_HOST) return "instagram"
     if (h in TIKTOK_HOSTS) return "tiktok"
@@ -311,6 +314,11 @@ private fun instagramKey(parts: Parts): String? {
         val shortcode = segments[1]
         return if (VIDEO_ID_RE.matches(shortcode)) "instagram:$shortcode" else null
     }
+    if (segments.size >= 3 && segments[0] == "stories" && segments[1] == "highlights") {
+        // One highlight; the tray itself is classified elsewhere, unchanged.
+        val highlightId = segments[2]
+        return if (isAllDigits(highlightId)) "instagram:highlight:$highlightId" else null
+    }
     if (segments.size >= 3 && segments[0] == "stories" && segments[1] != "highlights" &&
         isAllDigits(segments[2])
     ) {
@@ -320,8 +328,13 @@ private fun instagramKey(parts: Parts): String? {
     return null
 }
 
-private fun tiktokKey(parts: Parts): String? {
+private fun tiktokKey(parts: Parts, host: String): String? {
     val segments = parts.path.split('/').filter { it.isNotEmpty() }
+    if (bareHost(host) in TIKTOK_SHORT_HOSTS) {
+        // Short links are never resolved (no network): the code is the identity.
+        val code = segments.firstOrNull()
+        return if (code != null && VIDEO_ID_RE.matches(code)) "tiktok:short:$code" else null
+    }
     if (segments.size >= 3 && segments[0].startsWith("@") && segments[1] == "video" &&
         isAllDigits(segments[2])
     ) {
@@ -339,7 +352,7 @@ fun normalizeUrl(url: String): String {
     val host = (parts.hostname ?: "").lowercase()
     val kind = hostKind(host)
     if (kind != null) return normaliseYoutube(parts, kind)
-    val site = siteKind(host)
+    val site = siteKindOfHost(host)
     if (site != null) return normaliseSite(parts, site)
 
     val scheme = parts.scheme
@@ -367,9 +380,25 @@ fun videoKey(url: String): String? {
         val videoId = videoIdOf(parts, kind) ?: return null
         return "youtube:$videoId"
     }
-    return when (siteKind(host)) {
+    return when (siteKindOfHost(host)) {
         "instagram" -> instagramKey(parts)
-        "tiktok" -> tiktokKey(parts)
+        "tiktok" -> tiktokKey(parts, host)
         else -> null
     }
+}
+
+/**
+ * `"instagram"` / `"tiktok"` for a URL on those sites, else null.
+ *
+ * Never throws: an unparseable URL has no known site. Same host rules as
+ * [normalizeUrl], so callers can pick wording per site.
+ */
+fun siteKind(url: String?): String? {
+    if (url == null) return null
+    val parts = try {
+        split(url)
+    } catch (_: IllegalArgumentException) {
+        return null
+    }
+    return siteKindOfHost(parts.hostname ?: "")
 }

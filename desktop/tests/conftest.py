@@ -15,6 +15,14 @@ from elisium_downloader.engine.history import History  # noqa: E402
 from elisium_downloader.engine.queue import DownloadQueue  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _never_scan_real_browser_profiles(monkeypatch):
+    """The app's default detector reads the real home; no test may do that."""
+    from elisium_downloader.engine import browsers
+
+    monkeypatch.setattr(browsers, "detect_default", lambda: [])
+
+
 @pytest.fixture(scope="session")
 def qapp():
     from PySide6.QtWidgets import QApplication

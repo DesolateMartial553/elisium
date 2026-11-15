@@ -390,3 +390,10 @@ def test_toolbar_and_shortcuts_still_work_with_card_buttons(window) -> None:
     window.table.selectRow(0)
     pump()
     assert window.resume_action.isEnabled() and not window.pause_action.isEnabled()
+
+
+def test_sign_in_codes_cover_expired_session_and_401() -> None:
+    # Brief 9A: these two failures are fixed in Settings > Accounts too.
+    assert mw.SIGN_IN_CODES == frozenset(
+        {"sign_in_required", "login_required", "session_expired", "http_401"}
+    )

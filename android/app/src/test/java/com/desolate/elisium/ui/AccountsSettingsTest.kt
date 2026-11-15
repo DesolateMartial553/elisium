@@ -103,4 +103,18 @@ class AccountsSettingsTest {
         assertEquals(false, store.state.value.wifiOnly)
         assertEquals(CookiesStatus.None, vm.state.value.cookies)
     }
+
+    @Test fun aCapturedSessionIsStoredLikeAPickedFile() = runTest(UnconfinedTestDispatcher()) {
+        // Brief 9B: the in-app sign-in hands the same kind of text to the same store.
+        val cookies = FakeCookiesStore()
+        val vm = SettingsViewModel(FakeSettingsStore(), backgroundScope, cookies = cookies)
+        val session = "# Netscape HTTP Cookie File\n.instagram.com\tTRUE\t/\tTRUE\t1\tsessionid\tabc\n"
+        assertEquals(true, vm.importCookies(session))
+        assertEquals(CookiesStatus.Imported(1), vm.state.value.cookies)
+        assertNull(vm.state.value.cookiesRejected)
+        assertEquals(session, cookies.stored)
+        // A session text that is not a cookie file is refused and reported, never stored.
+        assertEquals(false, vm.importCookies("sessionid=abc"))
+        assertEquals(CookiesCheck.WrongFormat, vm.state.value.cookiesRejected)
+    }
 }

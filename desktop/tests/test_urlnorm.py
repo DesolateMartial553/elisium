@@ -133,7 +133,39 @@ def test_instagram_story_key_needs_an_id() -> None:
     url = "https://www.instagram.com/stories/tiktok/3211234567890123456/"
     assert video_key(url) == "instagram:story:tiktok:3211234567890123456"
     assert video_key("https://www.instagram.com/stories/tiktok/") is None
-    assert video_key("https://www.instagram.com/stories/highlights/17912345678901234/") is None
+
+
+@pytest.mark.parametrize(
+    ("url", "normalised"),
+    [
+        (
+            "https://www.instagram.com/stories/highlights/17912345678901234/",
+            "https://instagram.com/stories/highlights/17912345678901234/",
+        ),
+        (
+            "https://instagram.com/stories/highlights/17912345678901234",
+            "https://instagram.com/stories/highlights/17912345678901234",
+        ),
+        (
+            "https://m.instagram.com/stories/highlights/17912345678901234/?igsh=abc",
+            "https://instagram.com/stories/highlights/17912345678901234/",
+        ),
+        (
+            "https://www.instagram.com/stories/highlights/17912345678901234/"
+            "?utm_source=ig_web&igshid=xyz",
+            "https://instagram.com/stories/highlights/17912345678901234/",
+        ),
+    ],
+)
+def test_instagram_highlight_key(url: str, normalised: str) -> None:
+    assert video_key(url) == "instagram:highlight:17912345678901234"
+    # The tray still normalises like every other Instagram link.
+    assert normalize_url(url) == normalised
+
+
+def test_instagram_highlight_needs_a_numeric_id() -> None:
+    assert video_key("https://www.instagram.com/stories/highlights/") is None
+    assert video_key("https://www.instagram.com/stories/highlights/notanid/") is None
 
 
 def test_instagram_profile_has_no_key() -> None:
@@ -156,10 +188,47 @@ def test_tiktok_forms_share_one_key(url: str) -> None:
     assert normalize_url(url) == f"https://tiktok.com/@tiktok/video/{TIKTOK_ID}"
 
 
-def test_tiktok_short_link_has_no_key_but_loses_junk() -> None:
-    url = "https://vm.tiktok.com/ZMabc123/?_t=1&share_app_id=1340"
-    assert video_key(url) is None
-    assert normalize_url(url) == "https://vm.tiktok.com/ZMabc123/"
+@pytest.mark.parametrize(
+    ("url", "normalised"),
+    [
+        ("https://vm.tiktok.com/ZMabc123/", "https://vm.tiktok.com/ZMabc123/"),
+        ("https://vm.tiktok.com/ZMabc123", "https://vm.tiktok.com/ZMabc123"),
+        (
+            "https://vm.tiktok.com/ZMabc123/?_t=1&share_app_id=1340",
+            "https://vm.tiktok.com/ZMabc123/",
+        ),
+        (
+            "https://vt.tiktok.com/ZMabc123/?is_from_webapp=1&sender_device=pc",
+            "https://vt.tiktok.com/ZMabc123/",
+        ),
+    ],
+)
+def test_tiktok_short_link_keeps_one_key_without_redirects(
+    url: str, normalised: str
+) -> None:
+    assert video_key(url) == "tiktok:short:ZMabc123"
+    # Junk still goes, and the short host is never resolved to a full URL.
+    assert normalize_url(url) == normalised
+
+
+def test_tiktok_short_link_variants() -> None:
+    assert normalize_url("https://vm.tiktok.com/ZMabc123/?_t=1&share_app_id=1340") == (
+        "https://vm.tiktok.com/ZMabc123/"
+    )
+    assert normalize_url("https://vt.tiktok.com/ZSabc123/") == (
+        "https://vt.tiktok.com/ZSabc123/"
+    )
+    assert video_key("https://vt.tiktok.com/ZSabc123/") == "tiktok:short:ZSabc123"
+    # Two different short hosts, two different videos, two keys.
+    assert video_key("https://vm.tiktok.com/ZMabc123/") != video_key(
+        "https://vt.tiktok.com/ZSabc123/"
+    )
+    # No code, no key; a full URL is not a short link.
+    assert video_key("https://vm.tiktok.com/") is None
+    assert video_key(f"https://www.tiktok.com/@tiktok/video/{TIKTOK_ID}") == (
+        f"tiktok:{TIKTOK_ID}"
+    )
+
 
 
 def test_youtube_behaviour_is_unchanged_next_to_the_new_sites() -> None:

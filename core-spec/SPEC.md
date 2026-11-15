@@ -32,6 +32,12 @@ Best video, 1080p, 720p, Audio only (mp3, m4a, opus, flac), Smallest file. Defau
 ## Sign-in (cookies)
 Some sites need a signed-in session (Instagram stories, private posts, some reels). Settings > Accounts offers one browser (`--cookies-from-browser firefox|chrome|chromium|brave|edge|vivaldi|opera`, default off) or an optional `cookies.txt` file; the browser wins when both are set. The app never asks for a password, never reads or copies the cookie contents, and keeps only the browser name / file path in settings - never in history. Instagram story trays (`/stories/<user>/`, `/stories/highlights/<id>/`) are playlists; a story URL with its own id is one item.
 
+**Android sign-in (phase 9):** no browser cookies exist on a phone, so Settings > Accounts has "Sign in to Instagram": a WebView on Instagram's own login page. The app never sees the password; it only watches its cookie store, and once a `sessionid` cookie appears it writes a Netscape `cookies.txt` (`.instagram.com`, one-year expiry) into app-private storage, then wipes the WebView's cookies, storage and cache. Navigation is limited to https on instagram.com / facebook.com / fbcdn.net. "Sign out" deletes the file. Importing a `cookies.txt` stays as an Advanced fallback. Cookies are never in backups.
+
+**Desktop sign-in (phase 9):** Elisium looks (read-only, names and hosts only, never values) for a browser that already holds an Instagram `sessionid` and offers it in one click; a failed item's "Sign in..." opens a dialog that picks it and retries the items that failed for a sign-in reason. Cookie flags are still passed for every site (the YouTube "not a bot" fix needs them).
+
+**yt-dlp updates (Android):** at most once per 24 h at startup, only when no download is active and the Wi-Fi-only gate allows it, plus an "Update yt-dlp" button in Settings. The time of every attempt is stored so a failing update is not retried on every launch.
+
 ## Plain-language errors (raw log kept under Details)
 | yt-dlp text contains | Message | Suggested fix |
 |---|---|---|
@@ -44,8 +50,13 @@ Some sites need a signed-in session (Instagram stories, private posts, some reel
 | `ffmpeg` not found | ffmpeg is missing. | Install ffmpeg |
 | Instagram `You need to log in to access this content` (stories, private posts) | Instagram needs you signed in. | Choose a browser in Settings > Accounts |
 | Instagram `Please wait a few minutes` | Instagram is limiting requests. Wait a few minutes and try again. | Wait a few minutes and try again |
+| Instagram `There is no video in this post` / `Instagram sent an empty media response` | This post has no video to download. | Check the link |
+| `HTTP Error 401` | The site refused to let Elisium in. | Sign in, then try again |
+| Instagram login-required text while cookies ARE configured | Your Instagram sign-in has expired. | Sign in again (Android: Settings > Accounts; desktop: choose your browser again) |
 | `could not find ... cookies database` / `Failed to decrypt` | Elisium could not read that browser's cookies. Close the browser or pick another. | Close the browser, or choose another browser in Settings |
 | anything else | Download failed. | See Details |
+
+The Instagram rows name Instagram only for Instagram URLs (or when no URL is known); for any other site the same codes use "The site wants you to be signed in." / "The site is limiting requests. Wait a few minutes and try again.". Android's `http_403` fix is "Update yt-dlp in Settings, or sign in".
 
 ## Accessibility (every UI)
 Every control has an accessible name; status is never colour-only (icon + text); full keyboard path; text scales to 200%; reduced-motion respected; progress announced at coarse steps (25% or completion).

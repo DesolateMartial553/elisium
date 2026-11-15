@@ -27,6 +27,8 @@ data class Settings(
     val notifyOnDone: Boolean = true,
     val appearance: Appearance = Appearance.System,
     val reduceMotion: Boolean = false,
+    /** Timestamp of the last yt-dlp auto-update check, in ms since epoch. Default 0 (never checked). */
+    val lastYtDlpCheck: Long = 0L,
 )
 
 private val LIMIT_RE = Regex("^\\d+(\\.\\d+)?[KMG]?$")
@@ -53,4 +55,5 @@ fun Settings.validated(): Settings = copy(
     concurrency = validConcurrency(concurrency),
     speedLimit = validSpeedLimit(speedLimit),
     presetId = validPresetId(presetId),
+    lastYtDlpCheck = lastYtDlpCheck.coerceAtLeast(0L),
 )

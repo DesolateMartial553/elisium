@@ -1,6 +1,7 @@
 package com.desolate.elisium.engine
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.fail
 import org.junit.Test
@@ -154,8 +155,28 @@ class UrlNormTest {
     fun `instagram story key needs an id`() {
         assertEquals("instagram:story:someone:3412345", videoKey("https://www.instagram.com/stories/someone/3412345/"))
         assertNull(videoKey("https://www.instagram.com/stories/someone/"))
-        assertNull(videoKey("https://www.instagram.com/stories/highlights/1791234567890/"))
         assertNull(videoKey("https://www.instagram.com/stories/someone/notanid/"))
+    }
+
+    @Test
+    fun `instagram highlight carries its own key`() {
+        val urls = listOf(
+            "https://www.instagram.com/stories/highlights/1791234567890/" to
+                "https://instagram.com/stories/highlights/1791234567890/",
+            "https://instagram.com/stories/highlights/1791234567890" to
+                "https://instagram.com/stories/highlights/1791234567890",
+            "https://m.instagram.com/stories/highlights/1791234567890/?igsh=abc" to
+                "https://instagram.com/stories/highlights/1791234567890/",
+            "https://www.instagram.com/stories/highlights/1791234567890/?utm_source=ig_web&igshid=xyz" to
+                "https://instagram.com/stories/highlights/1791234567890/",
+        )
+        for ((url, normalised) in urls) {
+            assertEquals(url, "instagram:highlight:1791234567890", videoKey(url))
+            assertEquals(url, normalised, normalizeUrl(url))
+        }
+        // The tray itself still has no key when there is no id.
+        assertNull(videoKey("https://www.instagram.com/stories/highlights/"))
+        assertNull(videoKey("https://www.instagram.com/stories/highlights/notanid/"))
     }
 
     @Test
@@ -191,10 +212,17 @@ class UrlNormTest {
     }
 
     @Test
-    fun `tiktok short link loses junk but has no key`() {
+    fun `tiktok short link keeps its key without a redirect`() {
         assertEquals("https://vm.tiktok.com/ZMabc123/", normalizeUrl("https://vm.tiktok.com/ZMabc123/?_t=abc"))
         assertEquals("https://vt.tiktok.com/ZSabc123/", normalizeUrl("https://vt.tiktok.com/ZSabc123/"))
-        assertNull(videoKey("https://vm.tiktok.com/ZMabc123/"))
+        assertEquals("tiktok:short:ZMabc123", videoKey("https://vm.tiktok.com/ZMabc123/"))
+        assertEquals("tiktok:short:ZMabc123", videoKey("https://vm.tiktok.com/ZMabc123"))
+        assertEquals("tiktok:short:ZMabc123", videoKey("https://vm.tiktok.com/ZMabc123/?share_app_id=1340&_t=1"))
+        assertEquals("tiktok:short:ZSabc123", videoKey("https://vt.tiktok.com/ZSabc123/?is_from_webapp=1&sender_device=pc"))
+        // Two different codes are two different videos.
+        assertNotEquals(videoKey("https://vm.tiktok.com/ZMabc123/"), videoKey("https://vt.tiktok.com/ZSabc123/"))
+        // No code, no key; a full TikTok URL is not a short link.
+        assertNull(videoKey("https://vm.tiktok.com/"))
         assertNull(videoKey("https://www.tiktok.com/@user"))
         assertNull(videoKey("https://www.tiktok.com/@user/video/notanid"))
     }

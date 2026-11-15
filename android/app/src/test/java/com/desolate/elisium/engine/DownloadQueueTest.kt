@@ -895,6 +895,27 @@ class DownloadQueueTest {
     }
 
     @Test
+    fun `a cookies file written later is used by the next attempt without touching the queue`() = runTest {
+        val r = rig()
+        // The real flow: the queue is given the path at startup, and the file only exists once the user signs in.
+        val jar = File(tmp.root, "cookies/cookies.txt")
+        r.queue.setCookiesFile(jar)
+        r.queue.add("https://vimeo.com/1")
+        r.runAll()
+        assertNull(r.backend.probeCookies[0])
+        assertNull(r.backend.requests[0].cookiesFile)
+
+        jar.parentFile?.mkdirs()
+        jar.writeText("# Netscape HTTP Cookie File\n.instagram.com\tTRUE\t/\tTRUE\t1\tsessionid\tabc\n")
+
+        r.queue.add("https://vimeo.com/2")
+        r.queue.start()
+        r.queue.waitUntilIdle()
+        assertEquals(jar, r.backend.probeCookies[1])
+        assertEquals(jar, r.backend.requests[1].cookiesFile)
+    }
+
+    @Test
     fun `the cookies path never reaches history`() = runTest {
         val r = rig()
         val jar = File(tmp.root, "cookies.txt").also { it.writeText("# Netscape HTTP Cookie File\n") }

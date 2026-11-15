@@ -2,13 +2,21 @@
 
 The table is the one in ``core-spec/SPEC.md``: case-insensitive substring
 match, first match wins, fallback is "Download failed.".
+
+Two rows name Instagram because that is where they come from. :func:`explain`
+takes the item's URL and whether a cookie source is configured, so the same
+raw text gets the right wording for other sites and an expired Instagram
+session is reported as such (brief 9A). Both arguments are optional: calling
+``explain(raw)`` keeps the old behaviour.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-__all__ = ["ErrorInfo", "explain"]
+from .urlnorm import site_kind
+
+__all__ = ["ErrorInfo", "apply_context", "explain"]
 
 
 @dataclass(frozen=True)
@@ -21,6 +29,36 @@ class ErrorInfo:
 
 
 _FALLBACK = ErrorInfo("Download failed.", "See Details", "unknown")
+
+# Instagram wording (used when there is no URL to judge, or it is Instagram).
+_IG_SIGNED_IN = ErrorInfo(
+    "Instagram needs you signed in.",
+    "Choose a browser in Settings > Accounts",
+    "login_required",
+)
+# The site wants a sign-in but is not Instagram: same code, no site name.
+_SIGNED_IN = ErrorInfo(
+    "The site wants you to be signed in.",
+    _IG_SIGNED_IN.fix,
+    "login_required",
+)
+_IG_RATE = ErrorInfo(
+    "Instagram is limiting requests. Wait a few minutes and try again.",
+    "Wait a few minutes and try again",
+    "rate_limited",
+)
+_RATE_LIMITED = ErrorInfo(
+    "The site is limiting requests. Wait a few minutes and try again.",
+    _IG_RATE.fix,
+    "rate_limited",
+)
+# A cookie source is configured and Instagram still asked for a sign-in: it
+# is the saved session that has gone stale, not the link.
+_SESSION_EXPIRED = ErrorInfo(
+    "Your Instagram sign-in has expired.",
+    "Choose your browser again in Settings > Accounts",
+    "session_expired",
+)
 
 # Order matters: first match wins (same order as the spec table).
 _TABLE: tuple[tuple[tuple[str, ...], ErrorInfo], ...] = (
@@ -40,11 +78,7 @@ _TABLE: tuple[tuple[tuple[str, ...], ErrorInfo], ...] = (
             "you must be logged in to view",
             "instagram needs you signed in",
         ),
-        ErrorInfo(
-            "Instagram needs you signed in.",
-            "Choose a browser in Settings > Accounts",
-            "login_required",
-        ),
+        _IG_SIGNED_IN,
     ),
     (
         # Instagram's own pacing message, not a plain HTTP 429.
@@ -53,10 +87,19 @@ _TABLE: tuple[tuple[tuple[str, ...], ErrorInfo], ...] = (
             "instagram is limiting",
             "request limit reached",
         ),
+        _IG_RATE,
+    ),
+    (
+        # A post with no video: yt-dlp's own wording (extractor/instagram.py,
+        # "raise_no_formats" and the empty Polaris response).
+        (
+            "there is no video in this post",
+            "instagram sent an empty media response",
+        ),
         ErrorInfo(
-            "Instagram is limiting requests. Wait a few minutes and try again.",
-            "Wait a few minutes and try again",
-            "rate_limited",
+            "This post has no video to download.",
+            "Check the link",
+            "no_media",
         ),
     ),
     (
@@ -89,6 +132,14 @@ _TABLE: tuple[tuple[tuple[str, ...], ErrorInfo], ...] = (
         ),
     ),
     (
+        ("http error 401",),
+        ErrorInfo(
+            "The site refused to let Elisium in.",
+            "Sign in, then try again",
+            "http_401",
+        ),
+    ),
+    (
         ("http error 403",),
         ErrorInfo(
             "The site refused the download.",
@@ -115,10 +166,43 @@ _TABLE: tuple[tuple[tuple[str, ...], ErrorInfo], ...] = (
 )
 
 
-def explain(raw_log: str) -> ErrorInfo:
+def _instagram_only(url: str | None) -> bool:
+    """True when a message may name Instagram: no URL, or an Instagram URL."""
+    if url is None:
+        return True
+    if not isinstance(url, str) or not url.strip():
+        return True
+    return site_kind(url) == "instagram"
+
+
+def apply_context(
+    info: ErrorInfo, url: str | None = None, hasCookies: bool = False
+) -> ErrorInfo:
+    """Adjust *info* for the item's site and cookie state.
+
+    * ``login_required`` / ``rate_limited`` on a non-Instagram URL use the
+      generic wording (other sites are not Instagram).
+    * ``login_required`` on Instagram with cookies configured is an expired
+      session, not a missing sign-in.
+
+    ``hasCookies`` keeps its camelCase spelling so both platforms use the same
+    argument name. Everything else is returned unchanged.
+    """
+    if info.code == "login_required":
+        if _instagram_only(url):
+            return _SESSION_EXPIRED if hasCookies else info
+        return _SIGNED_IN
+    if info.code == "rate_limited":
+        return info if _instagram_only(url) else _RATE_LIMITED
+    return info
+
+
+def explain(
+    raw_log: str, url: str | None = None, hasCookies: bool = False
+) -> ErrorInfo:
     """Map *raw_log* to an :class:`ErrorInfo` (never raises for plain text)."""
     text = (raw_log or "").lower()
     for needles, info in _TABLE:
         if any(needle in text for needle in needles):
-            return info
+            return apply_context(info, url, hasCookies)
     return _FALLBACK

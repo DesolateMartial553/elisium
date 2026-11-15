@@ -31,6 +31,7 @@ from elisium_downloader.engine.queue import MAX_CONCURRENCY, DownloadQueue
 
 from . import settings as settings_mod
 from .settings import Settings
+from .sign_in_dialog import Detector, browser_label
 
 __all__ = ["SettingsPage", "fetch_ytdlp_version"]
 
@@ -110,18 +111,22 @@ class SettingsPage(QWidget):
         path: str | Path | None = None,
         version_fn: Callable[[], str | None] | None = None,
         parent: QWidget | None = None,
+        detect_fn: Callable[[], list[str]] | None = None,
     ) -> None:
         super().__init__(parent)
         self.settings = settings
         self.queue = queue
         self.path = Path(path) if path is not None else None
         self._version_fn = version_fn or fetch_ytdlp_version
+        self._detect_fn = detect_fn
+        self.detected_browsers: list[str] = []
         self._loading = True
         self._build_ui()
         self._fit_to_font()
         self._load_controls()
         self._loading = False
         self._start_version_check()
+        self._start_detection()
 
     # -- construction ----------------------------------------------------
     def _build_ui(self) -> None:
@@ -203,6 +208,24 @@ class SettingsPage(QWidget):
         form.addRow(self._label("Default quality", self.preset_combo), self.preset_combo)
 
         form = card("Accounts")
+        self.detect_row = QWidget()
+        detect_layout = QHBoxLayout(self.detect_row)
+        detect_layout.setContentsMargins(0, 0, 0, 0)
+        detect_layout.setSpacing(12)
+        self.detect_label = _WrapLabel("")
+        self.detect_label.setWordWrap(True)
+        self._describe(
+            self.detect_label, "Signed-in browser found",
+            "A browser where Instagram looks signed in. Only the fact that you are "
+            "signed in was checked, never your cookies.",
+        )
+        self.detect_button = QPushButton("Use")
+        self.detect_button.setProperty("primary", True)
+        detect_layout.addWidget(self.detect_label, 1)
+        detect_layout.addWidget(self.detect_button)
+        form.addRow(self.detect_row)
+        form.setRowVisible(self.detect_row, False)
+        self._accounts_form = form
         self.cookies_combo = QComboBox()
         self.cookies_combo.addItem("Not signed in", None)
         for label, key in _COOKIE_BROWSER_LABELS:
@@ -289,6 +312,13 @@ class SettingsPage(QWidget):
         self._describe(self.version_label, "yt-dlp version",
                        "The installed version of the yt-dlp program.")
         form.addRow(self._label("yt-dlp version", self.version_label), self.version_label)
+        self.update_hint = _WrapLabel(
+            "If Instagram stops working, update yt-dlp (pacman -Syu / pip)"
+        )
+        self.update_hint.setWordWrap(True)
+        self._describe(self.update_hint, "About updating yt-dlp",
+                       "What to do when Instagram downloads stop working.")
+        form.addRow("", self.update_hint)
 
         self.open_data_button = QPushButton("Open data folder")
         self._describe(self.open_data_button, "Open data folder",
@@ -314,6 +344,7 @@ class SettingsPage(QWidget):
             signal.connect(self._changed)
         self.open_folder_button.clicked.connect(self.open_download_folder)
         self.open_data_button.clicked.connect(self.open_data_folder)
+        self.detect_button.clicked.connect(self.use_detected_browser)
         self.cookies_choose_button.clicked.connect(self.choose_cookies_file)
         self.cookies_clear_button.clicked.connect(self.clear_cookies_file)
 
@@ -321,7 +352,8 @@ class SettingsPage(QWidget):
         self.setTabOrder(self.limit_check, self.limit_spin)
         self.setTabOrder(self.limit_spin, self.limit_unit)
         self.setTabOrder(self.limit_unit, self.preset_combo)
-        self.setTabOrder(self.preset_combo, self.cookies_combo)
+        self.setTabOrder(self.preset_combo, self.detect_button)
+        self.setTabOrder(self.detect_button, self.cookies_combo)
         self.setTabOrder(self.cookies_combo, self.cookies_choose_button)
         self.setTabOrder(self.cookies_choose_button, self.cookies_clear_button)
         self.setTabOrder(self.cookies_clear_button, self.notify_check)
@@ -387,6 +419,7 @@ class SettingsPage(QWidget):
         self.motion_check.setChecked(s.reduce_motion)
         self.limit_spin.setEnabled(self.limit_check.isChecked())
         self.limit_unit.setEnabled(self.limit_check.isChecked())
+        self._update_detect_row()
 
     def _speed_text(self) -> str | None:
         if not self.limit_check.isChecked():
@@ -417,6 +450,7 @@ class SettingsPage(QWidget):
             except OSError:
                 pass
         settings_mod.apply(self.settings, self.queue)
+        self._update_detect_row()
         self.settingsChanged.emit(self.settings)
 
     # -- accounts --------------------------------------------------------
@@ -440,6 +474,45 @@ class SettingsPage(QWidget):
             self.cookies_file_edit.clear()
             self.cookies_file_edit.setToolTip("")
             self._changed()
+
+    def _start_detection(self) -> None:
+        """Look for a signed-in browser off the UI thread; never blocks startup."""
+        self._detector = Detector(self._detect_fn, self)
+        self._detector.done.connect(self._on_detected)
+        self._detector.start()
+
+    def _on_detected(self, found: object) -> None:
+        self.detected_browsers = [str(b) for b in (found or [])]  # type: ignore[union-attr]
+        self._update_detect_row()
+
+    def _update_detect_row(self) -> None:
+        """Offer the detected browser only while no browser or file is configured."""
+        configured = bool(self.settings.cookies_browser or self.settings.cookies_file)
+        show = bool(self.detected_browsers) and not configured
+        if show:
+            name = browser_label(self.detected_browsers[0])
+            self.detect_label.setText(f"Signed in to Instagram in {name}.")
+            self.detect_button.setText(f"Use {name}")
+            self._describe(
+                self.detect_button, f"Use {name}",
+                f"Use the cookies of {name} when a site needs a sign-in.",
+            )
+        self._accounts_form.setRowVisible(self.detect_row, show)
+
+    def use_detected_browser(self) -> None:
+        """Select the detected browser (same path as choosing it in the dropdown)."""
+        if self.detected_browsers:
+            self.use_browser(self.detected_browsers[0])
+
+    def use_browser(self, key: str) -> None:
+        """Select *key* in the dropdown: persisted and applied like any other choice."""
+        index = self.cookies_combo.findData(key)
+        if index < 0:
+            return
+        if self.cookies_combo.currentIndex() == index:
+            self._changed()
+        else:
+            self.cookies_combo.setCurrentIndex(index)  # fires _changed
 
     def show_accounts(self) -> None:
         """Scroll the Accounts section into view and focus the browser dropdown.

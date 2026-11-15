@@ -7,8 +7,9 @@ import java.io.File
 data class CookiesImport(val check: CookiesCheck, val status: CookiesStatus)
 
 /**
- * The imported `cookies.txt`, as Settings sees it. Android has no browser access, so the file is
- * picked with the system document picker and copied here; only its path is ever given to yt-dlp.
+ * The cookies file, as Settings sees it. The in-app Instagram sign-in writes it (a WebView session);
+ * a `cookies.txt` picked with the system document picker is still accepted as the advanced route.
+ * Only its path is ever given to yt-dlp.
  */
 interface CookiesStore {
     fun status(): CookiesStatus

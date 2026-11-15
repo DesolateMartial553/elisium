@@ -12,7 +12,7 @@ import kotlin.math.roundToInt
 enum class RowAction { Pause, Resume, Cancel, Retry, SignIn }
 
 /** Errors whose fix is "sign in": the row offers a shortcut to Settings > Accounts. */
-val SIGN_IN_CODES: Set<String> = setOf("sign_in_required", "login_required")
+val SIGN_IN_CODES: Set<String> = setOf("sign_in_required", "login_required", "session_expired", "http_401")
 
 /** Which buttons a row offers for [state]. Only actions the queue will accept are listed. */
 fun validActions(state: String, errorCode: String? = null): List<RowAction> = when (state) {

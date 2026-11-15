@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -24,6 +25,7 @@ interface SettingsStore {
     suspend fun setNotifyOnDone(value: Boolean)
     suspend fun setAppearance(value: Appearance)
     suspend fun setReduceMotion(value: Boolean)
+    suspend fun setLastYtDlpCheck(value: Long)
 }
 
 /**
@@ -73,6 +75,11 @@ class SettingsRepository(context: Context) : SettingsStore {
         store.edit { it[REDUCE_MOTION] = value }
     }
 
+    /** Stores the last yt-dlp auto-update check time (default 0 = never checked). */
+    override suspend fun setLastYtDlpCheck(value: Long) {
+        store.edit { it[LAST_YTDLP_CHECK] = value.coerceAtLeast(0L) }
+    }
+
     private fun Preferences.toSettings() = Settings(
         concurrency = this[CONCURRENCY] ?: Settings().concurrency,
         speedLimit = this[SPEED_LIMIT],
@@ -81,6 +88,7 @@ class SettingsRepository(context: Context) : SettingsStore {
         notifyOnDone = this[NOTIFY] ?: Settings().notifyOnDone,
         appearance = Appearance.fromStored(this[APPEARANCE]),
         reduceMotion = this[REDUCE_MOTION] ?: Settings().reduceMotion,
+        lastYtDlpCheck = this[LAST_YTDLP_CHECK] ?: 0L,
     ).validated()
 
     private companion object {
@@ -91,5 +99,6 @@ class SettingsRepository(context: Context) : SettingsStore {
         val NOTIFY = booleanPreferencesKey("notify_on_done")
         val APPEARANCE = stringPreferencesKey("appearance")
         val REDUCE_MOTION = booleanPreferencesKey("reduce_motion")
+        val LAST_YTDLP_CHECK = longPreferencesKey("last_ytdlp_check")
     }
 }
