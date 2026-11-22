@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Nightfall launch window. -->
+    <!-- Night shelf launch window: true black. -->
     <style name="Theme.Elisium" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/elisium_window_bg</item>
         <item name="android:statusBarColor">@android:color/transparent</item>

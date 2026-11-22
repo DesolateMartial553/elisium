@@ -1,35 +1,8 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
-    <!-- Arrow into a tray, stroked with the glow gradient (glowA -> glowB -> glowC). Inside the 66dp safe zone. -->
-    <group android:scaleX="0.54" android:scaleY="0.54" android:translateX="24.8" android:translateY="24.8">
-        <path android:pathData="M54,18v48" android:strokeWidth="11" android:strokeLineCap="round">
-            <aapt:attr name="android:strokeColor">
-                <gradient android:type="linear" android:startX="54" android:startY="18" android:endX="54" android:endY="90">
-                    <item android:offset="0" android:color="#FFB388FF" />
-                    <item android:offset="0.55" android:color="#FFFF8FB8" />
-                    <item android:offset="1" android:color="#FFFFC47E" />
-                </gradient>
-            </aapt:attr>
-        </path>
-        <path android:pathData="M32,46l22,22 22,-22" android:strokeWidth="11" android:strokeLineCap="round" android:strokeLineJoin="round">
-            <aapt:attr name="android:strokeColor">
-                <gradient android:type="linear" android:startX="54" android:startY="18" android:endX="54" android:endY="90">
-                    <item android:offset="0" android:color="#FFB388FF" />
-                    <item android:offset="0.55" android:color="#FFFF8FB8" />
-                    <item android:offset="1" android:color="#FFFFC47E" />
-                </gradient>
-            </aapt:attr>
-        </path>
-        <path android:pathData="M22,88h64" android:strokeWidth="11" android:strokeLineCap="round">
-            <aapt:attr name="android:strokeColor">
-                <gradient android:type="linear" android:startX="22" android:startY="0" android:endX="86" android:endY="0">
-                    <item android:offset="0" android:color="#FFB388FF" />
-                    <item android:offset="0.5" android:color="#FFFF8FB8" />
-                    <item android:offset="1" android:color="#FFFFC47E" />
-                </gradient>
-            </aapt:attr>
-        </path>
-    </group>
+    <!-- The mark: three stacked rounded bars getting shorter (a queue), the last in hue (#7CC4FF). Inside the 66dp safe zone. -->
+    <path android:pathData="M33,35h42" android:strokeColor="#59FFFFFF" android:strokeWidth="12" android:strokeLineCap="round" />
+    <path android:pathData="M33,53h27" android:strokeColor="#99FFFFFF" android:strokeWidth="12" android:strokeLineCap="round" />
+    <path android:pathData="M33,71h12" android:strokeColor="#FF7CC4FF" android:strokeWidth="12" android:strokeLineCap="round" />
 </vector>

@@ -9,43 +9,46 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import com.desolate.elisium.R
 
-/** Inter, bundled in `res/font` (OFL, see `android/OFL-Inter.txt`). */
-val InterFamily = FontFamily(
-    Font(R.font.inter_regular, FontWeight.Normal),
-    Font(R.font.inter_medium, FontWeight.Medium),
-    Font(R.font.inter_semibold, FontWeight.SemiBold),
-    Font(R.font.inter_bold, FontWeight.Bold),
-    Font(R.font.inter_extrabold, FontWeight.ExtraBold),
+/** Hanken Grotesk 400/600/700, bundled in `res/font` (SIL OFL, text in `res/raw/hanken_grotesk_ofl.txt`). */
+val HankenFamily = FontFamily(
+    Font(R.font.hanken_grotesk_regular, FontWeight.Normal),
+    Font(R.font.hanken_grotesk_semibold, FontWeight.SemiBold),
+    Font(R.font.hanken_grotesk_bold, FontWeight.Bold),
 )
 
-private fun style(size: Int, lineHeight: Int, weight: FontWeight, tracking: Double = 0.0) = TextStyle(
-    fontFamily = InterFamily,
+private fun style(size: Int, lineHeight: Int, weight: FontWeight) = TextStyle(
+    fontFamily = HankenFamily,
     fontSize = size.sp,
     lineHeight = lineHeight.sp,
     fontWeight = weight,
-    letterSpacing = tracking.sp,
 )
 
-/** DESIGN.md sizes: title 28, section 18, body 15-16, caption 13. Nothing is below 13sp. */
+/**
+ * DESIGN.md sizes: screen title 20/700, row title 15/600, big figure 24/600, body 14, meta 13, small 12.
+ * Nothing is below 12sp. Every slot Material may reach is mapped to one of those sizes.
+ */
 val ElisiumTypography = Typography(
-    displaySmall = style(32, 38, FontWeight.ExtraBold, -0.6),
-    headlineMedium = style(28, 34, FontWeight.ExtraBold, -0.5),
-    headlineSmall = style(24, 30, FontWeight.Bold, -0.3),
-    titleLarge = style(20, 26, FontWeight.Bold, -0.2),
-    titleMedium = style(18, 24, FontWeight.SemiBold, -0.1),
-    titleSmall = style(16, 22, FontWeight.SemiBold),
-    bodyLarge = style(16, 24, FontWeight.Normal),
-    bodyMedium = style(15, 22, FontWeight.Normal),
-    bodySmall = style(13, 18, FontWeight.Normal),
-    labelLarge = style(15, 20, FontWeight.SemiBold),
-    labelMedium = style(13, 18, FontWeight.Medium),
-    labelSmall = style(13, 18, FontWeight.Medium),
+    displayLarge = style(TypeSizes.FIGURE, 30, FontWeight.SemiBold),
+    displayMedium = style(TypeSizes.FIGURE, 30, FontWeight.SemiBold),
+    displaySmall = style(TypeSizes.FIGURE, 30, FontWeight.SemiBold),
+    headlineLarge = style(TypeSizes.TITLE, 26, FontWeight.Bold),
+    headlineMedium = style(TypeSizes.TITLE, 26, FontWeight.Bold),
+    headlineSmall = style(TypeSizes.FIGURE, 30, FontWeight.SemiBold),
+    titleLarge = style(TypeSizes.TITLE, 26, FontWeight.Bold),
+    titleMedium = style(TypeSizes.ROW_TITLE, 20, FontWeight.SemiBold),
+    titleSmall = style(TypeSizes.BODY, 20, FontWeight.SemiBold),
+    bodyLarge = style(TypeSizes.BODY, 20, FontWeight.Normal),
+    bodyMedium = style(TypeSizes.BODY, 20, FontWeight.Normal),
+    bodySmall = style(TypeSizes.META, 18, FontWeight.Normal),
+    labelLarge = style(TypeSizes.BODY, 20, FontWeight.SemiBold),
+    labelMedium = style(TypeSizes.META, 18, FontWeight.SemiBold),
+    labelSmall = style(TypeSizes.SMALL, 16, FontWeight.Normal),
 )
 
-/** Tabular figures for speeds, sizes and times so numbers do not jitter while they tick. */
+/** Tabular figures for percent, speed, size, time left and counts so numbers do not jitter while they tick. */
 val NumericStyle = TextStyle(fontFeatureSettings = "tnum")
 
-/** Every text size in [ElisiumTypography], for the "never below 13" test. */
+/** Every text size in [ElisiumTypography], for the "never below 12" test. */
 fun Typography.allSizes(): List<TextUnit> = listOf(
     displayLarge, displayMedium, displaySmall, headlineLarge, headlineMedium, headlineSmall,
     titleLarge, titleMedium, titleSmall, bodyLarge, bodyMedium, bodySmall, labelLarge, labelMedium, labelSmall,

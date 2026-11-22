@@ -5,6 +5,8 @@ import com.desolate.elisium.backend.YtDlpUpdateService
 import com.desolate.elisium.engine.MAX_CONCURRENCY
 import com.desolate.elisium.engine.Preset
 import com.desolate.elisium.engine.Presets
+import com.desolate.elisium.media.PhotoMode
+import com.desolate.elisium.media.SongLength
 import com.desolate.elisium.settings.Appearance
 import com.desolate.elisium.settings.CookiesCheck
 import com.desolate.elisium.settings.CookiesStatus
@@ -35,6 +37,18 @@ fun speedLimitError(text: String): SpeedLimitError? =
 /** How long the speed-limit field must sit still before what was typed is stored. */
 const val SPEED_LIMIT_DEBOUNCE_MS = 700L
 
+/** Photo-post choices in display order with their label (the settings screen resolves the string). */
+fun photoModeChoices(): List<Pair<PhotoMode, Int>> = listOf(
+    PhotoMode.PhotosSongVideo to com.desolate.elisium.R.string.photo_mode_video,
+    PhotoMode.PhotosSong to com.desolate.elisium.R.string.photo_mode_song,
+    PhotoMode.PhotosOnly to com.desolate.elisium.R.string.photo_mode_photos,
+)
+
+fun songLengthChoices(): List<Pair<SongLength, Int>> = listOf(
+    SongLength.Snippet to com.desolate.elisium.R.string.song_length_snippet,
+    SongLength.Full to com.desolate.elisium.R.string.song_length_full,
+)
+
 /** The presets in display order, labels from [Presets]. */
 fun presetChoices(): List<Preset> = Presets.PRESETS.values.toList()
 
@@ -56,6 +70,10 @@ data class SettingsUiState(
     val notifyOnDone: Boolean = true,
     val appearance: Appearance = Appearance.System,
     val reduceMotion: Boolean = false,
+    /** Photo posts with a song: what is saved (Settings > Photos and music). */
+    val photoMode: PhotoMode = PhotoMode.PhotosSongVideo,
+    /** Song length: the post's snippet or the full song. */
+    val songLength: SongLength = SongLength.Snippet,
     /** Nothing imported, or how many cookies the imported cookies.txt holds. */
     val cookies: CookiesStatus = CookiesStatus.None,
     /** Why the last pick was not imported, or null when it was (or nothing was picked yet). */
@@ -105,6 +123,8 @@ class SettingsViewModel(
             notifyOnDone = s.notifyOnDone,
             appearance = s.appearance,
             reduceMotion = s.reduceMotion,
+            photoMode = s.photoMode,
+            songLength = s.songLength,
             cookies = jar,
             cookiesRejected = rejected,
             update = upd.first,
@@ -164,6 +184,14 @@ class SettingsViewModel(
 
     fun setReduceMotion(value: Boolean) {
         scope.launch { store.setReduceMotion(value) }
+    }
+
+    fun setPhotoMode(value: PhotoMode) {
+        scope.launch { store.setPhotoMode(value) }
+    }
+
+    fun setSongLength(value: SongLength) {
+        scope.launch { store.setSongLength(value) }
     }
 
     /**

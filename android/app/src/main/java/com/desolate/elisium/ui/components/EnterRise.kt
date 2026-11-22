@@ -12,7 +12,7 @@ import com.desolate.elisium.ui.theme.Motion
 import kotlinx.coroutines.launch
 
 /**
- * Card enter: fade in and rise 8dp over the base duration. Does nothing when [animate] is false
+ * Card enter: fade in and rise 6dp over the base duration. Does nothing when [animate] is false
  * (already shown once) or motion is reduced.
  */
 @Composable
@@ -25,6 +25,6 @@ fun Modifier.enterRise(animate: Boolean): Modifier {
     }
     return this.graphicsLayer {
         alpha = progress.value
-        translationY = (1f - progress.value) * 8.dp.toPx()
+        translationY = (1f - progress.value) * 6.dp.toPx()
     }
 }

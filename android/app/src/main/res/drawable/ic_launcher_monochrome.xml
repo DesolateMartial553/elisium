@@ -1,10 +1,8 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
-    <!-- Same arrow-into-tray silhouette for themed icons (API 33); the system tints it. -->
-    <group android:scaleX="0.54" android:scaleY="0.54" android:translateX="24.8" android:translateY="24.8">
-        <path android:pathData="M54,18v48" android:strokeColor="#000000" android:strokeWidth="11" android:strokeLineCap="round" />
-        <path android:pathData="M32,46l22,22 22,-22" android:strokeColor="#000000" android:strokeWidth="11" android:strokeLineCap="round" android:strokeLineJoin="round" />
-        <path android:pathData="M22,88h64" android:strokeColor="#000000" android:strokeWidth="11" android:strokeLineCap="round" />
-    </group>
+    <!-- Same three bars for themed icons (API 33); the system tints it. -->
+    <path android:pathData="M33,35h42" android:strokeColor="#000000" android:strokeWidth="12" android:strokeLineCap="round" />
+    <path android:pathData="M33,53h27" android:strokeColor="#000000" android:strokeWidth="12" android:strokeLineCap="round" />
+    <path android:pathData="M33,71h12" android:strokeColor="#000000" android:strokeWidth="12" android:strokeLineCap="round" />
 </vector>

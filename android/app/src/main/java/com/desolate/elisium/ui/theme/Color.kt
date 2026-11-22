@@ -3,69 +3,69 @@ package com.desolate.elisium.ui.theme
 import androidx.compose.ui.graphics.Color
 
 /**
- * Afterglow colour tokens, copied from `design/tokens.json` (a JVM test fails if they drift).
- * Never add a colour here that is not in the token file.
+ * Night shelf colour tokens, copied from `design/nightshelf/tokens.json` (a JVM test reads that file and
+ * fails if they drift). Never add a colour here that is not in the token file.
  */
-data class AfterglowPalette(
-    val bg: Color,
+data class ShelfPalette(
+    val ground: Color,
     val surface: Color,
     val raised: Color,
-    val outline: Color,
+    val control: Color,
     val text: Color,
     val muted: Color,
-    val accent: Color,
-    val onAccent: Color,
-    val glowA: Color,
-    val glowB: Color,
-    val glowC: Color,
-    val success: Color,
-    val error: Color,
+    val faint: Color,
+    val hue: Color,
+    val track: Color,
+    val primary: Color,
+    val onPrimary: Color,
+    val positive: Color,
+    val negative: Color,
     val warning: Color,
-    val outlineStrong: Color,
+    val focus: Color,
 ) {
     /** Token name -> colour, in the same names as `tokens.json` (used by the drift and contrast tests). */
     fun byName(): Map<String, Color> = mapOf(
-        "bg" to bg, "surface" to surface, "raised" to raised, "outline" to outline,
-        "text" to text, "muted" to muted, "accent" to accent, "onAccent" to onAccent,
-        "glowA" to glowA, "glowB" to glowB, "glowC" to glowC,
-        "success" to success, "error" to error, "warning" to warning, "outlineStrong" to outlineStrong,
+        "ground" to ground, "surface" to surface, "raised" to raised, "control" to control,
+        "text" to text, "muted" to muted, "faint" to faint, "hue" to hue, "track" to track,
+        "primary" to primary, "onPrimary" to onPrimary,
+        "positive" to positive, "negative" to negative, "warning" to warning, "focus" to focus,
     )
 }
 
-/** Nightfall (token set `dark`). */
-val NightPalette = AfterglowPalette(
-    bg = Color(0xFF0E0A1A),
-    surface = Color(0xFF171126),
-    raised = Color(0xFF211836),
-    outline = Color(0xFF3B2E5C),
-    text = Color(0xFFF4EFFF),
-    muted = Color(0xFFB9ACD9),
-    accent = Color(0xFFC4A1FF),
-    onAccent = Color(0xFF1A0F33),
-    glowA = Color(0xFFB388FF),
-    glowB = Color(0xFFFF8FB8),
-    glowC = Color(0xFFFFC47E),
-    success = Color(0xFF7DE3B2),
-    error = Color(0xFFFF8E9B),
-    warning = Color(0xFFFFC47E),
-    outlineStrong = Color(0xFF8472B5),
+/** Token set `dark`: true black. */
+val NightPalette = ShelfPalette(
+    ground = Color(0xFF000000),
+    surface = Color(0xFF111111),
+    raised = Color(0xFF2A2A2A),
+    control = Color(0xFF444444),
+    text = Color(0xFFFFFFFF),
+    muted = Color(0xFFB4B4B4),
+    faint = Color(0xFF949494),
+    hue = Color(0xFF7CC4FF),
+    track = Color(0xFF2A2A2A),
+    primary = Color(0xFFFFFFFF),
+    onPrimary = Color(0xFF000000),
+    positive = Color(0xFF9FE3B0),
+    negative = Color(0xFFFF6B6F),
+    warning = Color(0xFFE5A93B),
+    focus = Color(0xFF7CC4FF),
 )
 
-/** Daybreak (token set `light`). */
-val DayPalette = AfterglowPalette(
-    bg = Color(0xFFFBF8FF),
+/** Token set `light`: plain light grey. */
+val DayPalette = ShelfPalette(
+    ground = Color(0xFFF5F5F4),
     surface = Color(0xFFFFFFFF),
-    raised = Color(0xFFF1EAFE),
-    outline = Color(0xFFCBBDEA),
-    text = Color(0xFF1B1330),
-    muted = Color(0xFF5B4D7C),
-    accent = Color(0xFF6B3FD4),
-    onAccent = Color(0xFFFFFFFF),
-    glowA = Color(0xFF7C4DFF),
-    glowB = Color(0xFFE0457B),
-    glowC = Color(0xFFB3650A),
-    success = Color(0xFF0B7A4B),
-    error = Color(0xFFB3261E),
+    raised = Color(0xFFE9E9E7),
+    control = Color(0xFFC9C9C6),
+    text = Color(0xFF0B0B0B),
+    muted = Color(0xFF4F4F4D),
+    faint = Color(0xFF626260),
+    hue = Color(0xFF1769B5),
+    track = Color(0xFFE9E9E7),
+    primary = Color(0xFF0B0B0B),
+    onPrimary = Color(0xFFFFFFFF),
+    positive = Color(0xFF1F7A45),
+    negative = Color(0xFFC4242A),
     warning = Color(0xFF8A5200),
-    outlineStrong = Color(0xFF7A69A8),
+    focus = Color(0xFF1769B5),
 )

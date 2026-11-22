@@ -11,6 +11,7 @@ import com.desolate.elisium.engine.QueueItem
 import com.desolate.elisium.ui.downloads.QueueGateway
 import com.desolate.elisium.ui.downloads.QueueViewModel
 import com.desolate.elisium.ui.history.HistoryViewModel
+import com.desolate.elisium.ui.history.requeueLine
 import com.desolate.elisium.ui.settings.SettingsViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -40,6 +41,23 @@ class AppQueueGateway(private val app: ElisiumApp) : QueueGateway {
     override fun cancelAll() { app.scope.launch { app.coordinator.value?.cancelAll() } }
 }
 
+/**
+ * History's "Download again": `add(url, force = true)` so a photo post or story runs again without the media
+ * archive. Falls back to the normal add path while the engine is not up yet.
+ */
+suspend fun downloadAgain(app: ElisiumApp, url: String): String = withContext(Dispatchers.IO) {
+    val queue = app.queue ?: return@withContext app.addLinks(listOf(url))
+    val before = queue.items.value.map { it.id }.toSet()
+    try {
+        val item = queue.add(url, force = true)
+        requeueLine(existed = item.id in before, stateAfter = item.state)
+    } catch (_: IllegalArgumentException) {
+        app.addLinks(listOf(url)) // not a link the engine can normalise: the normal path words it
+    } catch (_: Exception) {
+        "Could not add that link"
+    }
+}
+
 /** Holds the three screen models for the lifetime of the activity (survives rotation). Compile-verified only. */
 class ElisiumViewModel(val app: ElisiumApp) : ViewModel() {
     val queue = QueueViewModel(
@@ -51,7 +69,7 @@ class ElisiumViewModel(val app: ElisiumApp) : ViewModel() {
     val history = HistoryViewModel(
         history = app.history,
         output = app.outputStore,
-        requeue = { url -> app.addLinks(listOf(url)) },
+        requeue = { url -> downloadAgain(app, url) },
         scope = viewModelScope,
         io = Dispatchers.IO,
     )

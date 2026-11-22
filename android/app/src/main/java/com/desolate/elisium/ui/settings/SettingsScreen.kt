@@ -6,13 +6,16 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -20,7 +23,6 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -43,11 +45,13 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationManagerCompat
@@ -56,19 +60,22 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.desolate.elisium.EngineState
 import com.desolate.elisium.R
+import com.desolate.elisium.media.PhotoMode
+import com.desolate.elisium.media.SongLength
 import com.desolate.elisium.settings.Appearance
 import com.desolate.elisium.settings.CookiesCheck
 import com.desolate.elisium.settings.CookiesStatus
-import com.desolate.elisium.ui.components.AfterglowPreviews
 import com.desolate.elisium.ui.components.ElisiumButton
-import com.desolate.elisium.ui.components.ElisiumCard
-import com.desolate.elisium.ui.components.ElisiumOutlinedButton
+import com.desolate.elisium.ui.components.ElisiumQuietButton
 import com.desolate.elisium.ui.components.ElisiumTextField
-import com.desolate.elisium.ui.components.TintedBanner
+import com.desolate.elisium.ui.components.NoticeBanner
+import com.desolate.elisium.ui.components.ShelfPreviews
 import com.desolate.elisium.ui.components.focusRing
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import com.desolate.elisium.ui.permissions.showNotificationsOffNotice
+import com.desolate.elisium.ui.theme.CardShape
 import com.desolate.elisium.ui.theme.ElisiumTheme
+import com.desolate.elisium.ui.theme.RowShape
+import com.desolate.elisium.ui.theme.Sizes
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -116,6 +123,8 @@ fun SettingsScreen(
         onNotify = vm::setNotifyOnDone,
         onAppearance = vm::setAppearance,
         onReduceMotion = vm::setReduceMotion,
+        onPhotoMode = vm::setPhotoMode,
+        onSongLength = vm::setSongLength,
         onOpenNotificationSettings = { openNotificationSettings(context) },
         onImportCookies = { picker.launch(arrayOf("*/*")) },
         onRemoveCookies = vm::removeCookies,
@@ -177,6 +186,8 @@ fun SettingsContent(
     modifier: Modifier = Modifier,
     onAppearance: (Appearance) -> Unit = {},
     onReduceMotion: (Boolean) -> Unit = {},
+    onPhotoMode: (PhotoMode) -> Unit = {},
+    onSongLength: (SongLength) -> Unit = {},
     onSpeedLimitDone: () -> Unit = {},
     onImportCookies: () -> Unit = {},
     onRemoveCookies: () -> Unit = {},
@@ -194,49 +205,29 @@ fun SettingsContent(
     LaunchedEffect(focusAccounts) { if (focusAccounts) focusPending = true }
 
     Column(
-        modifier = modifier.verticalScroll(scroll).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+        modifier = modifier.verticalScroll(scroll).padding(horizontal = Sizes.GUTTER_PHONE.dp).padding(bottom = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Section(R.string.settings_appearance) {
-            Text(
-                stringResource(R.string.settings_appearance_help),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            for (choice in Appearance.entries) {
-                ChoiceCard(
-                    label = stringResource(appearanceLabel(choice)),
-                    selected = choice == state.appearance,
-                    onSelect = { onAppearance(choice) },
-                )
-            }
-            SwitchRow(
-                stringResource(R.string.settings_reduce_motion),
-                stringResource(R.string.settings_reduce_motion_help),
-                state.reduceMotion,
-                onReduceMotion,
-            )
-        }
-
-        Section(R.string.settings_quality) {
-            Text(
-                stringResource(R.string.settings_quality_help),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        Group(R.string.settings_downloads) {
+            SubHead(stringResource(R.string.settings_quality), stringResource(R.string.settings_quality_help))
             for (preset in presetChoices()) {
-                ChoiceCard(label = preset.label, selected = preset.id == state.presetId, onSelect = { onPreset(preset.id) })
+                ChoiceRow(label = preset.label, selected = preset.id == state.presetId, onSelect = { onPreset(preset.id) })
             }
-        }
-
-        Section(R.string.settings_concurrency) {
-            Text(
-                stringResource(R.string.settings_concurrency_help),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                ElisiumOutlinedButton(
+            Divider()
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(stringResource(R.string.settings_concurrency), style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        stringResource(R.string.settings_concurrency_help),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ElisiumTheme.extras.faint,
+                    )
+                }
+                ElisiumQuietButton(
                     text = "-",
                     onClick = onDecrease,
                     enabled = state.canDecrease,
@@ -251,31 +242,60 @@ fun SettingsContent(
                         contentDescription = valueSpoken
                     },
                 )
-                ElisiumOutlinedButton(
+                ElisiumQuietButton(
                     text = "+",
                     onClick = onIncrease,
                     enabled = state.canIncrease,
                     description = stringResource(R.string.settings_concurrency_more),
                 )
             }
+            Divider()
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.settings_speed), style = MaterialTheme.typography.titleSmall, modifier = Modifier.semantics { heading() })
+                ElisiumTextField(
+                    value = state.speedLimitText,
+                    onValueChange = onSpeedLimit,
+                    label = stringResource(R.string.settings_speed_label),
+                    placeholder = stringResource(R.string.settings_speed_label),
+                    singleLine = true,
+                    isError = state.speedLimitError != null,
+                    supportingText = stringResource(
+                        if (state.speedLimitError != null) R.string.settings_speed_invalid else R.string.settings_speed_help,
+                    ),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { onSpeedLimitDone() }),
+                    fill = ElisiumTheme.extras.raised,
+                )
+            }
+            Divider()
+            SwitchRow(stringResource(R.string.settings_wifi_only), stringResource(R.string.settings_wifi_only_help), state.wifiOnly, onWifiOnly)
+            Divider()
+            SwitchRow(stringResource(R.string.settings_notify), stringResource(R.string.settings_notify_help), state.notifyOnDone, onNotify)
+            if (notificationsOff) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    NoticeBanner(
+                        tone = ElisiumTheme.extras.warning,
+                        title = stringResource(R.string.settings_notifications_off_title),
+                        body = stringResource(R.string.settings_notifications_off),
+                    )
+                    ElisiumQuietButton(stringResource(R.string.settings_notifications_open), onOpenNotificationSettings)
+                }
+            }
         }
 
-        Section(R.string.settings_speed) {
-            ElisiumTextField(
-                value = state.speedLimitText,
-                onValueChange = onSpeedLimit,
-                label = stringResource(R.string.settings_speed_label),
-                singleLine = true,
-                isError = state.speedLimitError != null,
-                supportingText = stringResource(
-                    if (state.speedLimitError != null) R.string.settings_speed_invalid else R.string.settings_speed_help,
-                ),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { onSpeedLimitDone() }),
-            )
+        Group(R.string.settings_photos_music) {
+            SubHead(stringResource(R.string.settings_photo_mode), stringResource(R.string.settings_photo_mode_help))
+            for ((mode, label) in photoModeChoices()) {
+                ChoiceRow(label = stringResource(label), selected = mode == state.photoMode, onSelect = { onPhotoMode(mode) })
+            }
+            Divider()
+            SubHead(stringResource(R.string.settings_song_length), stringResource(R.string.settings_song_length_help))
+            for ((length, label) in songLengthChoices()) {
+                ChoiceRow(label = stringResource(label), selected = length == state.songLength, onSelect = { onSongLength(length) })
+            }
         }
 
-        Section(
+        Group(
             R.string.settings_accounts,
             Modifier.onGloballyPositioned { coords ->
                 accountsY = coords.positionInParent().y
@@ -292,63 +312,61 @@ fun SettingsContent(
                 }
             },
         ) {
-            Text(
-                stringResource(R.string.settings_accounts_help),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            val imported = state.cookies is CookiesStatus.Imported
-            // The count stays out of the main line; it belongs to the cookies.txt in Advanced.
-            Text(
-                text = stringResource(
-                    if (imported) R.string.settings_accounts_signed_in else R.string.settings_accounts_none,
-                ),
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-            )
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                ElisiumButton(
-                    stringResource(R.string.settings_accounts_sign_in),
-                    onSignIn,
-                    description = stringResource(R.string.settings_accounts_sign_in_for),
-                )
-                if (imported) {
-                    ElisiumOutlinedButton(
-                        stringResource(R.string.settings_accounts_sign_out),
-                        onRemoveCookies,
-                        description = stringResource(R.string.settings_accounts_sign_out_for),
-                    )
-                }
-            }
-            state.cookiesRejected?.let { rejected ->
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    text = stringResource(
-                        when (rejected) {
-                            CookiesCheck.Empty -> R.string.settings_accounts_empty
-                            CookiesCheck.WrongFormat -> R.string.settings_accounts_wrong_format
-                            is CookiesCheck.Valid -> R.string.settings_accounts_none
-                        },
-                    ),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
+                    stringResource(R.string.settings_accounts_help),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ElisiumTheme.extras.faint,
+                )
+                val imported = state.cookies is CookiesStatus.Imported
+                // The count stays out of the main line; it belongs to the cookies.txt in Advanced.
+                Text(
+                    text = stringResource(if (imported) R.string.settings_accounts_signed_in else R.string.settings_accounts_none),
+                    style = MaterialTheme.typography.titleSmall,
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                 )
-            }
-            // The old, harder way (a cookies.txt exported on a computer) is kept, but out of the way.
-            var advanced by remember { mutableStateOf(false) }
-            val expandedWord = stringResource(
-                if (advanced) R.string.settings_accounts_expanded else R.string.settings_accounts_collapsed,
-            )
-            ElisiumOutlinedButton(
-                text = stringResource(R.string.settings_accounts_advanced),
-                onClick = { advanced = !advanced },
-                description = stringResource(
-                    if (advanced) R.string.settings_accounts_advanced_hide else R.string.settings_accounts_advanced_show,
-                ),
-                modifier = Modifier.semantics { stateDescription = expandedWord },
-            )
-            if (advanced) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ElisiumButton(
+                        stringResource(R.string.settings_accounts_sign_in),
+                        onSignIn,
+                        description = stringResource(R.string.settings_accounts_sign_in_for),
+                    )
+                    if (imported) {
+                        ElisiumQuietButton(
+                            stringResource(R.string.settings_accounts_sign_out),
+                            onRemoveCookies,
+                            description = stringResource(R.string.settings_accounts_sign_out_for),
+                        )
+                    }
+                }
+                state.cookiesRejected?.let { rejected ->
+                    Text(
+                        text = stringResource(
+                            when (rejected) {
+                                CookiesCheck.Empty -> R.string.settings_accounts_empty
+                                CookiesCheck.WrongFormat -> R.string.settings_accounts_wrong_format
+                                is CookiesCheck.Valid -> R.string.settings_accounts_none
+                            },
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = ElisiumTheme.extras.negative,
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                    )
+                }
+                // The old, harder way (a cookies.txt exported on a computer) is kept, but out of the way.
+                var advanced by remember { mutableStateOf(false) }
+                val expandedWord = stringResource(
+                    if (advanced) R.string.settings_accounts_expanded else R.string.settings_accounts_collapsed,
+                )
+                ElisiumQuietButton(
+                    text = stringResource(R.string.settings_accounts_advanced),
+                    onClick = { advanced = !advanced },
+                    description = stringResource(
+                        if (advanced) R.string.settings_accounts_advanced_hide else R.string.settings_accounts_advanced_show,
+                    ),
+                    modifier = Modifier.semantics { stateDescription = expandedWord },
+                )
+                if (advanced) {
                     val cookies = state.cookies
                     Text(
                         text = if (cookies is CookiesStatus.Imported) {
@@ -374,53 +392,54 @@ fun SettingsContent(
             }
         }
 
-        Section(R.string.settings_network) {
-            SwitchRow(stringResource(R.string.settings_wifi_only), stringResource(R.string.settings_wifi_only_help), state.wifiOnly, onWifiOnly)
-            SwitchRow(stringResource(R.string.settings_notify), stringResource(R.string.settings_notify_help), state.notifyOnDone, onNotify)
-            if (notificationsOff) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TintedBanner(
-                        tint = ElisiumTheme.extras.warning,
-                        title = stringResource(R.string.settings_notifications_off_title),
-                        body = stringResource(R.string.settings_notifications_off),
-                    )
-                    ElisiumButton(stringResource(R.string.settings_notifications_open), onOpenNotificationSettings)
-                }
+        Group(R.string.settings_appearance) {
+            SubHead(stringResource(R.string.settings_appearance), stringResource(R.string.settings_appearance_help))
+            for (choice in Appearance.entries) {
+                ChoiceRow(label = stringResource(appearanceLabel(choice)), selected = choice == state.appearance, onSelect = { onAppearance(choice) })
             }
+            Divider()
+            SwitchRow(
+                stringResource(R.string.settings_reduce_motion),
+                stringResource(R.string.settings_reduce_motion_help),
+                state.reduceMotion,
+                onReduceMotion,
+            )
         }
 
-        Section(R.string.settings_about) {
-            Text(stringResource(R.string.about_version, appVersion.ifEmpty { "?" }), style = MaterialTheme.typography.bodyLarge)
-            Text(
-                text = when (engine) {
-                    is EngineState.Ready -> stringResource(R.string.about_ytdlp, engine.ytDlpVersion)
-                    EngineState.Starting -> stringResource(R.string.about_ytdlp_starting)
-                    is EngineState.Failed -> stringResource(R.string.about_ytdlp_failed)
-                },
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            ElisiumOutlinedButton(
-                text = stringResource(R.string.update_ytdlp),
-                onClick = onUpdateYtDlp,
-                enabled = engine is EngineState.Ready && state.canUpdate,
-                description = stringResource(R.string.update_ytdlp_for),
-            )
-            val updateLine = when (val u = state.update) {
-                UpdateUi.Idle -> if (state.downloadsActive) stringResource(R.string.update_ytdlp_busy_downloads) else null
-                UpdateUi.Running -> stringResource(R.string.update_ytdlp_running)
-                is UpdateUi.Updated -> stringResource(R.string.update_ytdlp_updated, u.version)
-                is UpdateUi.UpToDate -> stringResource(R.string.update_ytdlp_up_to_date, u.version)
-                is UpdateUi.Failed -> stringResource(R.string.update_ytdlp_failed, u.reason)
-            }
-            if (updateLine != null) {
+        Group(R.string.settings_about) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.about_version, appVersion.ifEmpty { "?" }), style = MaterialTheme.typography.titleSmall)
                 Text(
-                    text = updateLine,
+                    text = when (engine) {
+                        is EngineState.Ready -> stringResource(R.string.about_ytdlp, engine.ytDlpVersion)
+                        EngineState.Starting -> stringResource(R.string.about_ytdlp_starting)
+                        is EngineState.Failed -> stringResource(R.string.about_ytdlp_failed)
+                    },
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (state.update is UpdateUi.Failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                 )
+                ElisiumQuietButton(
+                    text = stringResource(R.string.update_ytdlp),
+                    onClick = onUpdateYtDlp,
+                    enabled = engine is EngineState.Ready && state.canUpdate,
+                    description = stringResource(R.string.update_ytdlp_for),
+                )
+                val updateLine = when (val u = state.update) {
+                    UpdateUi.Idle -> if (state.downloadsActive) stringResource(R.string.update_ytdlp_busy_downloads) else null
+                    UpdateUi.Running -> stringResource(R.string.update_ytdlp_running)
+                    is UpdateUi.Updated -> stringResource(R.string.update_ytdlp_updated, u.version)
+                    is UpdateUi.UpToDate -> stringResource(R.string.update_ytdlp_up_to_date, u.version)
+                    is UpdateUi.Failed -> stringResource(R.string.update_ytdlp_failed, u.reason)
+                }
+                if (updateLine != null) {
+                    Text(
+                        text = updateLine,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (state.update is UpdateUi.Failed) ElisiumTheme.extras.negative else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                    )
+                }
+                Text(stringResource(R.string.about_folder), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Text(stringResource(R.string.about_folder), style = MaterialTheme.typography.bodyLarge)
         }
     }
 }
@@ -431,43 +450,55 @@ private fun appearanceLabel(a: Appearance): Int = when (a) {
     Appearance.Day -> R.string.appearance_day
 }
 
-/** A group: a section title (accent) above one raised card holding the controls. */
+/** A group: its title (13/600, muted) above one `surface` list with rows inside. */
 @Composable
-private fun Section(titleRes: Int, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+private fun Group(titleRes: Int, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
             stringResource(titleRes),
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.primary,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 4.dp).semantics { heading() },
         )
-        ElisiumCard { content() }
+        Surface(shape = RowShape, color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
+            Column { content() }
+        }
     }
 }
 
-/** A selectable card (radio behaviour): the selected one gets the glow border. */
+/** A 1dp `raised` rule between two rows of a group (rows are separated, cards are not outlined). */
 @Composable
-private fun ChoiceCard(label: String, selected: Boolean, onSelect: () -> Unit) {
+private fun Divider() {
+    Box(Modifier.fillMaxWidth().height(1.dp).background(ElisiumTheme.extras.raised))
+}
+
+/** The label (and a line of help) of a setting that has several choice rows under it. */
+@Composable
+private fun SubHead(label: String, help: String) {
+    Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp)) {
+        Text(label, style = MaterialTheme.typography.titleSmall)
+        Text(help, style = MaterialTheme.typography.bodySmall, color = ElisiumTheme.extras.faint)
+    }
+}
+
+/** One choice (radio behaviour). The chosen row shows a check mark, never a colour alone. */
+@Composable
+private fun ChoiceRow(label: String, selected: Boolean, onSelect: () -> Unit) {
     val source = remember { MutableInteractionSource() }
-    Surface(
-        color = MaterialTheme.colorScheme.surface,
-        shape = MaterialTheme.shapes.medium,
-        border = androidx.compose.foundation.BorderStroke(
-            if (selected) 2.dp else 1.dp,
-            if (selected) ElisiumTheme.extras.glowBrush() else androidx.compose.ui.graphics.SolidColor(ElisiumTheme.extras.outlineStrong),
-        ),
-        modifier = Modifier.fillMaxWidth()
-            .focusRing(source, MaterialTheme.shapes.medium)
-            .selectable(selected = selected, interactionSource = source, indication = null, onClick = onSelect, role = Role.RadioButton),
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = Sizes.MIN_TARGET.dp)
+            .focusRing(source, CardShape)
+            .selectable(selected = selected, interactionSource = source, indication = null, onClick = onSelect, role = Role.RadioButton)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            Modifier.heightIn(min = 48.dp).padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-            if (selected) Text("\u2713", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.clearAndSetSemantics { })
-        }
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        if (selected) Text("\u2713", style = MaterialTheme.typography.titleMedium, modifier = Modifier.clearAndSetSemantics { })
     }
 }
 
@@ -477,30 +508,33 @@ private fun SwitchRow(label: String, help: String, checked: Boolean, onChange: (
     val source = remember { MutableInteractionSource() }
     Row(
         modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)
-            .focusRing(source, MaterialTheme.shapes.small)
-            .toggleable(value = checked, interactionSource = source, indication = null, onValueChange = onChange, role = Role.Switch),
+            .focusRing(source, CardShape)
+            .toggleable(value = checked, interactionSource = source, indication = null, onValueChange = onChange, role = Role.Switch)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Column(Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyLarge)
-            Text(help, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(label, style = MaterialTheme.typography.titleSmall)
+            Text(help, style = MaterialTheme.typography.bodySmall, color = ElisiumTheme.extras.faint)
         }
+        val extras = ElisiumTheme.extras
         Switch(
             checked = checked,
             onCheckedChange = null,
             colors = SwitchDefaults.colors(
                 checkedTrackColor = MaterialTheme.colorScheme.primary,
                 checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                uncheckedTrackColor = ElisiumTheme.extras.raised,
-                uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                uncheckedBorderColor = MaterialTheme.colorScheme.outline,
+                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                uncheckedTrackColor = extras.raised,
+                uncheckedThumbColor = extras.faint,
+                uncheckedBorderColor = extras.raised,
             ),
         )
     }
 }
 
-@AfterglowPreviews
+@ShelfPreviews
 @Composable
 private fun SettingsPreview() {
     ElisiumTheme {

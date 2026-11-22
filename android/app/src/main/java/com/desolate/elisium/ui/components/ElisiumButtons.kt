@@ -1,18 +1,11 @@
 package com.desolate.elisium.ui.components
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -22,16 +15,17 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.desolate.elisium.ui.theme.ElisiumTheme
+import com.desolate.elisium.ui.theme.PillShape
+import com.desolate.elisium.ui.theme.Sizes
 
-private val Pill = RoundedCornerShape(50)
-private val ButtonPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp)
+private val ButtonPadding = PaddingValues(horizontal = 18.dp, vertical = 8.dp)
 
 private fun Modifier.target(description: String?): Modifier {
-    val base = this.heightIn(min = 48.dp)
+    val base = this.heightIn(min = Sizes.MIN_TARGET.dp)
     return if (description != null) base.semantics { contentDescription = description } else base
 }
 
-/** Filled accent pill: at least 48dp tall, 2dp accent focus ring. [description] overrides the spoken name. */
+/** The primary action: an inverted pill (white with black text at night, black with white by day), 44dp tall at least. */
 @Composable
 fun ElisiumButton(
     text: String,
@@ -44,22 +38,22 @@ fun ElisiumButton(
     Button(
         onClick = onClick,
         enabled = enabled,
-        shape = Pill,
+        shape = PillShape,
         contentPadding = ButtonPadding,
         interactionSource = source,
         colors = ButtonDefaults.buttonColors(
             containerColor = MaterialTheme.colorScheme.primary,
             contentColor = MaterialTheme.colorScheme.onPrimary,
-            disabledContainerColor = ElisiumTheme.extras.outline,
-            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            disabledContainerColor = ElisiumTheme.extras.raised,
+            disabledContentColor = ElisiumTheme.extras.faint,
         ),
-        modifier = modifier.target(description).focusRing(source, Pill),
+        modifier = modifier.target(description).focusRing(source, PillShape),
     ) { Text(text, style = MaterialTheme.typography.labelLarge) }
 }
 
-/** Outlined pill with the stronger outline token; same size and focus rules as [ElisiumButton]. */
+/** A quiet secondary pill: `raised` fill, no border, text colour. Same size and focus rules as [ElisiumButton]. */
 @Composable
-fun ElisiumOutlinedButton(
+fun ElisiumQuietButton(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -67,49 +61,42 @@ fun ElisiumOutlinedButton(
     description: String? = null,
 ) {
     val source = remember { MutableInteractionSource() }
-    OutlinedButton(
+    Button(
         onClick = onClick,
         enabled = enabled,
-        shape = Pill,
+        shape = PillShape,
         contentPadding = ButtonPadding,
         interactionSource = source,
-        border = BorderStroke(1.dp, if (enabled) MaterialTheme.colorScheme.outline else ElisiumTheme.extras.outline),
-        colors = ButtonDefaults.outlinedButtonColors(
+        colors = ButtonDefaults.buttonColors(
+            containerColor = ElisiumTheme.extras.raised,
             contentColor = MaterialTheme.colorScheme.onSurface,
-            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            disabledContainerColor = ElisiumTheme.extras.raised,
+            disabledContentColor = ElisiumTheme.extras.faint,
         ),
-        modifier = modifier.target(description).focusRing(source, Pill),
+        modifier = modifier.target(description).focusRing(source, PillShape),
     ) { Text(text, style = MaterialTheme.typography.labelLarge) }
 }
 
-/** Flat accent text button (dialogs). */
+/** Flat text action in the text colour (dialogs, row links such as "Open"). No hue: the accent is for progress only. */
 @Composable
 fun ElisiumTextButton(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
     description: String? = null,
 ) {
     val source = remember { MutableInteractionSource() }
     TextButton(
         onClick = onClick,
-        shape = Pill,
+        enabled = enabled,
+        shape = PillShape,
         interactionSource = source,
-        modifier = modifier.target(description).focusRing(source, Pill),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+        colors = ButtonDefaults.textButtonColors(
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            disabledContentColor = ElisiumTheme.extras.faint,
+        ),
+        modifier = modifier.target(description).focusRing(source, PillShape),
     ) { Text(text, style = MaterialTheme.typography.labelLarge) }
-}
-
-@AfterglowPreviews
-@Composable
-private fun ElisiumButtonsPreview() {
-    ElisiumTheme {
-        Surface(color = MaterialTheme.colorScheme.background) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                ElisiumButton("Add", {})
-                ElisiumButton("Add", {}, enabled = false)
-                ElisiumOutlinedButton("Pause", {})
-                ElisiumTextButton("Keep it", {})
-            }
-        }
-    }
 }

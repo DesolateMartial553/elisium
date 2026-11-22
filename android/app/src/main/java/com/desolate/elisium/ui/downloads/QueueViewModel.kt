@@ -54,6 +54,24 @@ class QueueViewModel(
         .map { list -> list.map { it.toRowModel() } }
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
+    private val _filter = MutableStateFlow(QueueFilter.All)
+
+    /** The selected chip. */
+    val filter: StateFlow<QueueFilter> = _filter.asStateFlow()
+
+    fun setFilter(value: QueueFilter) {
+        _filter.value = value
+    }
+
+    /** Count per chip (zero stays 0). */
+    val counts: StateFlow<Map<QueueFilter, Int>> = rows
+        .map { filterCounts(it) }
+        .stateIn(scope, SharingStarted.Eagerly, filterCounts(emptyList()))
+
+    /** The rows under the selected chip, in queue order. */
+    val visibleRows: StateFlow<List<QueueRowModel>> = combine(rows, _filter) { list, f -> applyFilter(list, f) }
+        .stateIn(scope, SharingStarted.Eagerly, emptyList())
+
     val banner: StateFlow<Banner?> = combine(gateway.holdReason, gateway.serviceError, ::bannerFor)
         .stateIn(scope, SharingStarted.Eagerly, null)
 

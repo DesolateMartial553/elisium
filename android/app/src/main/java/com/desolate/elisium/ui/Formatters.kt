@@ -92,6 +92,30 @@ fun progressLine(downloaded: Long?, total: Long?, speed: Double?, eta: Double?):
     return listOf(formatSpeed(speed), size, left).filter { it.isNotEmpty() }.joinToString(" - ")
 }
 
+/** Time left in the Night shelf style, same as desktop: "7 s", "1 min 37 s", "1 h 5 min"; empty for null or negative. */
+fun etaText(value: Double?): String {
+    if (value == null || value < 0) return ""
+    val (h, m, s) = split(value)
+    return when {
+        h > 0 -> if (m > 0) "$h h $m min" else "$h h"
+        m > 0 -> if (s > 0) "$m min $s s" else "$m min"
+        else -> "$s s"
+    }
+}
+
+private val SITES = listOf(
+    "youtube.com" to "YouTube", "youtu.be" to "YouTube", "instagram.com" to "Instagram", "tiktok.com" to "TikTok",
+    "vimeo.com" to "Vimeo", "soundcloud.com" to "SoundCloud", "twitter.com" to "X", "x.com" to "X",
+    "facebook.com" to "Facebook", "twitch.tv" to "Twitch",
+)
+
+/** A short, friendly site name for a link ("YouTube"), else the plain host ("example.com"). Same table as desktop. */
+fun siteName(url: String?): String {
+    val host = runCatching { java.net.URI(url.orEmpty().trim()).host }.getOrNull()?.lowercase().orEmpty()
+    for ((suffix, name) in SITES) if (host == suffix || host.endsWith(".$suffix")) return name
+    return host.removePrefix("www.").ifEmpty { url.orEmpty() }
+}
+
 /** Host of [url] without "www.", or the URL itself when it has none. */
 fun siteOf(url: String): String {
     val host = runCatching { java.net.URI(url.trim()).host }.getOrNull()

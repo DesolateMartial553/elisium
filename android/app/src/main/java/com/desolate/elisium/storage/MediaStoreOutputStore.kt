@@ -39,6 +39,17 @@ class MediaStoreOutputStore(context: Context) : OutputStore {
         false
     }
 
+    /** Is a file whose name contains `[<videoId>]` already in the owner's [subfolder] (flat when null)? */
+    override fun existsInFolder(subfolder: String?, videoId: String): Boolean = try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            existingByIdModern(videoId, relativePathFor(subfolder))
+        } else {
+            existingByIdLegacy(videoId, subfolder)
+        }
+    } catch (_: Exception) {
+        false
+    }
+
     override fun existsAt(location: String): Boolean = try {
         if (location.startsWith("content://")) {
             resolver.query(Uri.parse(location), arrayOf(MediaStore.MediaColumns._ID), null, null, null)
@@ -56,11 +67,19 @@ class MediaStoreOutputStore(context: Context) : OutputStore {
 
     // -- publishing ------------------------------------------------------
     override suspend fun publish(stagedFile: File, displayName: String): PublishedFile? =
+        publish(stagedFile, displayName, null)
+
+    /** Media engine files land in `Download/Elisium/<owner>/`; a null or blank [subfolder] stays flat. */
+    override suspend fun publish(stagedFile: File, displayName: String, subfolder: String?): PublishedFile? =
         withContext(Dispatchers.IO) {
             val name = safeDisplayName(displayName)
             if (!stagedFile.isFile) return@withContext null
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) publishModern(stagedFile, name) else publishLegacy(stagedFile, name)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    publishModern(stagedFile, name, relativePathFor(subfolder))
+                } else {
+                    publishLegacy(stagedFile, name, subfolder)
+                }
             } catch (c: CancellationException) {
                 throw c
             } catch (p: StoragePermissionException) {
@@ -77,8 +96,8 @@ class MediaStoreOutputStore(context: Context) : OutputStore {
     }
 
     @RequiresApi(Build.VERSION_CODES.Q)
-    private fun publishModern(staged: File, name: String): PublishedFile? {
-        val existing = findModernByName(name)
+    private fun publishModern(staged: File, name: String, relativePath: String): PublishedFile? {
+        val existing = findModernByName(name, relativePath)
         if (decidePublish(existing != null) == PublishDecision.USE_EXISTING) {
             staged.delete()
             return PublishedFile(existing.toString(), name)
@@ -86,7 +105,7 @@ class MediaStoreOutputStore(context: Context) : OutputStore {
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
             put(MediaStore.MediaColumns.MIME_TYPE, mimeTypeFor(name))
-            put(MediaStore.MediaColumns.RELATIVE_PATH, RELATIVE_PATH)
+            put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
             put(MediaStore.MediaColumns.IS_PENDING, 1)
         }
         val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
@@ -108,14 +127,15 @@ class MediaStoreOutputStore(context: Context) : OutputStore {
     }
 
     @Suppress("DEPRECATION")
-    private fun legacyDir(): File = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), FOLDER_NAME)
+    private fun legacyDir(subfolder: String? = null): File =
+        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), folderPathFor(subfolder))
 
-    private fun publishLegacy(staged: File, name: String): PublishedFile? {
+    private fun publishLegacy(staged: File, name: String, subfolder: String?): PublishedFile? {
         // API 26-28 needs WRITE_EXTERNAL_STORAGE; without it mkdirs fails and the real cause would be hidden.
         if (ContextCompat.checkSelfPermission(appContext, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
             throw StoragePermissionException()
         }
-        val dir = legacyDir()
+        val dir = legacyDir(subfolder)
         if (!dir.isDirectory && !dir.mkdirs()) return null
         val target = File(dir, name)
         if (decidePublish(target.isFile) == PublishDecision.USE_EXISTING) {
@@ -140,14 +160,14 @@ class MediaStoreOutputStore(context: Context) : OutputStore {
     // -- lookups ---------------------------------------------------------
     private val modernProjection = arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME)
 
-    /** The content URI of a file with exactly [name] under Download/Elisium/, or null. */
+    /** The content URI of a file with exactly [name] in [relativePath] (Download/Elisium/ or an owner folder), or null. */
     @RequiresApi(Build.VERSION_CODES.Q)
-    private fun findModernByName(name: String): Uri? {
+    private fun findModernByName(name: String, relativePath: String): Uri? {
         val cursor = resolver.query(
             MediaStore.Downloads.EXTERNAL_CONTENT_URI,
             modernProjection,
             "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} = ?",
-            arrayOf(name, RELATIVE_PATH),
+            arrayOf(name, relativePath),
             null,
         ) ?: return null
         cursor.use {
@@ -157,12 +177,12 @@ class MediaStoreOutputStore(context: Context) : OutputStore {
     }
 
     @RequiresApi(Build.VERSION_CODES.Q)
-    private fun existingByIdModern(videoId: String): Boolean {
+    private fun existingByIdModern(videoId: String, relativePath: String = RELATIVE_PATH): Boolean {
         val cursor = resolver.query(
             MediaStore.Downloads.EXTERNAL_CONTENT_URI,
             modernProjection,
             "${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ? ESCAPE '\\' AND ${MediaStore.MediaColumns.RELATIVE_PATH} = ?",
-            arrayOf(likePatternForVideoId(videoId), RELATIVE_PATH),
+            arrayOf(likePatternForVideoId(videoId), relativePath),
             null,
         ) ?: return false
         cursor.use {
@@ -173,8 +193,9 @@ class MediaStoreOutputStore(context: Context) : OutputStore {
         return false
     }
 
-    private fun existingByIdLegacy(videoId: String): Boolean {
-        val names = legacyDir().list() ?: return false
-        return names.any { nameHasVideoId(it, videoId) && File(legacyDir(), it).isFile }
+    private fun existingByIdLegacy(videoId: String, subfolder: String? = null): Boolean {
+        val dir = legacyDir(subfolder)
+        val names = dir.list() ?: return false
+        return names.any { nameHasVideoId(it, videoId) && File(dir, it).isFile }
     }
 }

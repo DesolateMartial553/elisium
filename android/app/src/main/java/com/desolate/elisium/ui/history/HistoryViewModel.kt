@@ -2,6 +2,7 @@ package com.desolate.elisium.ui.history
 
 import com.desolate.elisium.engine.HistoryStore
 import com.desolate.elisium.engine.OutputStore
+import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Locale
 import kotlinx.coroutines.CoroutineDispatcher
@@ -38,6 +39,7 @@ class HistoryViewModel(
     private val io: CoroutineDispatcher,
     private val zone: ZoneId = ZoneId.systemDefault(),
     private val locale: Locale = Locale.getDefault(),
+    private val today: () -> LocalDate = { LocalDate.now(zone) },
 ) {
     private val _query = MutableStateFlow("")
     val query: StateFlow<String> = _query
@@ -53,6 +55,26 @@ class HistoryViewModel(
         }
         .flowOn(io)
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    private val _site = MutableStateFlow<String?>(null)
+
+    /** The selected site chip (null = All). */
+    val site: StateFlow<String?> = _site
+
+    /** "All" is implied; these are the sites in the current rows (the selected one stays even if a search hides it). */
+    val sites: StateFlow<List<String>> = combine(rows, _site) { list, selected ->
+        val found = siteOptions(list)
+        if (selected != null && selected !in found) found + selected else found
+    }.stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    /** The rows for the current search and site filter, grouped by day. */
+    val groups: StateFlow<List<DayGroup>> = combine(rows, _site) { list, selected ->
+        groupByDay(filterBySite(list, selected), today(), locale)
+    }.stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    fun setSite(site: String?) {
+        _site.value = site
+    }
 
     private val messageChannel = Channel<String>(Channel.BUFFERED)
     val messages: Flow<String> = messageChannel.receiveAsFlow()

@@ -8,6 +8,22 @@ const val RELATIVE_PATH = "Download/Elisium/"
 /** Folder name under the public Downloads directory (API 26-28 path). */
 const val FOLDER_NAME = "Elisium"
 
+/**
+ * The MediaStore `RELATIVE_PATH` for an owner [subfolder]: `Download/Elisium/<owner>/`. A null, blank or
+ * all-dots name keeps the flat `Download/Elisium/` (the name is cleaned by `safeFolderName`, so it can never
+ * climb out of the folder or add a level).
+ */
+fun relativePathFor(subfolder: String?): String {
+    val clean = com.desolate.elisium.media.safeFolderName(subfolder) ?: return RELATIVE_PATH
+    return "$RELATIVE_PATH$clean/"
+}
+
+/** The same folder as a path below the public Downloads directory: `Elisium` or `Elisium/<owner>`. */
+fun folderPathFor(subfolder: String?): String {
+    val clean = com.desolate.elisium.media.safeFolderName(subfolder) ?: return FOLDER_NAME
+    return "$FOLDER_NAME/$clean"
+}
+
 /** yt-dlp's `%(title).150B` limit on the title part, in UTF-8 bytes. */
 const val TITLE_MAX_BYTES = 150
 
