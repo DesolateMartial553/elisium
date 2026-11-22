@@ -23,8 +23,20 @@ _PRESET_LIST: list[Preset] = [
     Preset("1080p", "1080p", "bestvideo*[height<=1080]+bestaudio/best[height<=1080]"),
     Preset("720p", "720p", "bestvideo*[height<=720]+bestaudio/best[height<=720]"),
     Preset("audio-mp3", "Audio only (MP3)", "bestaudio/best", ("-x", "--audio-format", "mp3")),
-    Preset("audio-m4a", "Audio only (M4A)", "bestaudio/best", ("-x", "--audio-format", "m4a")),
-    Preset("audio-opus", "Audio only (Opus)", "bestaudio/best", ("-x", "--audio-format", "opus")),
+    # Prefer a stream already in the target codec so ffmpeg copies instead of
+    # re-encoding (brief 12B); the ``-x --audio-format`` result is unchanged.
+    Preset(
+        "audio-m4a",
+        "Audio only (M4A)",
+        "bestaudio[ext=m4a]/bestaudio/best",
+        ("-x", "--audio-format", "m4a"),
+    ),
+    Preset(
+        "audio-opus",
+        "Audio only (Opus)",
+        "bestaudio[acodec=opus]/bestaudio/best",
+        ("-x", "--audio-format", "opus"),
+    ),
     Preset("audio-flac", "Audio only (FLAC)", "bestaudio/best", ("-x", "--audio-format", "flac")),
     Preset("smallest", "Smallest file", "wv*+wa/w"),
 ]

@@ -154,6 +154,30 @@ def test_downloads_always_pass_no_playlist(tmp_path: Path) -> None:
     assert argv.index("--no-playlist") < len(argv) - 1  # before the URL
 
 
+def test_info_json_replaces_the_url_and_changes_nothing_else(tmp_path: Path) -> None:
+    plain = build_command(
+        make_options(tmp_path, tmp_path / "yt-dlp", path_file=tmp_path / "p", limit_rate="1M")
+    )
+    info = tmp_path / "tmp" / "7.info.json"
+    reused_opts = make_options(
+        tmp_path, tmp_path / "yt-dlp", path_file=tmp_path / "p", limit_rate="1M", info_json=info
+    )
+    reused = build_command(reused_opts)
+    assert reused[reused.index("--load-info-json") + 1] == str(info)
+    assert reused_opts.url not in reused
+    assert plain[-1] == reused_opts.url
+    stripped = list(reused)
+    at = stripped.index("--load-info-json")
+    del stripped[at : at + 2]
+    assert stripped == plain[:-1]
+
+
+def test_no_info_json_means_no_load_flag(tmp_path: Path) -> None:
+    argv = build_command(make_options(tmp_path, tmp_path / "yt-dlp"))
+    assert "--load-info-json" not in argv
+    assert argv[-1] == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+
 def test_options_reject_an_empty_url(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         DownloadOptions(

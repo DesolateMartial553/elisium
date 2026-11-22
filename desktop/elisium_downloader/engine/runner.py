@@ -110,6 +110,10 @@ class DownloadOptions:
     # the cookie contents (the browser wins when both are set).
     cookies_browser: str | None = None
     cookies_file: str | Path | None = None
+    # The probe's ``-J`` info dict, already written to a file. When set, yt-dlp
+    # downloads with ``--load-info-json`` instead of extracting the page again
+    # (brief 12B); ``url`` is then not passed at all.
+    info_json: Path | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.url, str) or not self.url.strip():
@@ -137,6 +141,10 @@ def build_command(opts: DownloadOptions) -> list[str]:
     the only reliable way to know the real output path for non-YouTube sites
     (the ``[<id>]`` scan in :func:`DownloadQueue._find_output` only works for
     YouTube ids). The flag does not imply ``--quiet`` or ``--simulate``.
+
+    When ``opts.info_json`` is set, ``--load-info-json <file>`` replaces the
+    URL: yt-dlp downloads from the probe's info dict instead of extracting the
+    page a second time (brief 12B). Every other flag is unchanged.
     """
     argv = [
         str(opts.ytdlp),
@@ -166,6 +174,9 @@ def build_command(opts: DownloadOptions) -> list[str]:
         # the whole playlist or mix into one item.
         "--no-playlist",
     ]
+    if opts.info_json is not None:
+        # Brief 12B: reuse the probe instead of extracting the page again.
+        argv.extend(["--load-info-json", _path(opts.info_json)])
     if opts.path_file is not None:
         argv.extend(
             [
@@ -178,7 +189,8 @@ def build_command(opts: DownloadOptions) -> list[str]:
         argv.extend(["--limit-rate", str(opts.limit_rate)])
     argv.extend(_cookie_args(opts.cookies_browser, opts.cookies_file))
     argv.extend(str(arg) for arg in opts.extra_args)
-    argv.append(opts.url)
+    if opts.info_json is None:
+        argv.append(opts.url)
     return argv
 
 

@@ -44,6 +44,7 @@ Workflow: OpenCode implements one brief from `briefs/`; Claude audits the diff a
 | 9C | OpenCode (hit free limit, wrote seam/policy draft) then Sonnet subagent | Claude: pass (Android 422 tests 0 failures, lint OK, APK builds; updater/policy/startup read) | Android yt-dlp auto-update (24 h, Wi-Fi gate, idle only) + Settings button. Real update call UNVERIFIED on a phone. |
 | 9D | Sonnet subagent (OpenCode out of free usage) | Claude: pass (desktop full suite rerun, contrast ALL PASS; browsers.py privacy review) | Desktop: read-only detector for a signed-in Instagram browser, Accounts hint, Sign-in dialog with retry. Real Firefox/Chrome DB layouts + Hyprland dialog UNVERIFIED. |
 | 10A | OpenCode (Claude-launched, finished without hitting its limit) | Claude: pass (Android 457 tests 0 failures, lint 0 errors, rerun by Claude; parser code read, no network/logging in media/) | Route (c) own Kotlin client recommended; bundled Python lacks requests/certifi; QuickJS is bundled; ffmpeg runnable via ProcessBuilder; library yt-dlp is 2025.11.12 (auto-update covers it). |
+| 12B (desktop) | OpenCode (hit free limit mid-task, left queue.py broken) then Sonnet subagent | Claude: pass (608 passed / 2 skipped rerun by Claude; diff read: info JSON 0600 O_EXCL, deleted after attempt, one URL re-run on stale/early failure) | Extract once via --load-info-json; audio-m4a/opus prefer native streams. reuse_probe flag not yet wired to a setting (12C). Android 12B still to do. |
 |---|---|---|---|
 
 ## Owner actions pending

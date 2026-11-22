@@ -22,6 +22,7 @@ while any item is in ``downloading``/``merging``/``converting``.
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -42,6 +43,7 @@ __all__ = [
     "RETRYABLE_CODES",
     "MAX_CONCURRENCY",
     "DEFAULT_CONCURRENCY",
+    "REUSE_PROBE_MAX_AGE",
     "ALREADY_DOWNLOADED",
     "QueueItem",
     "DownloadQueue",
@@ -57,6 +59,23 @@ DOWNLOADING_STATES: frozenset[str] = frozenset(
 ACTIVE_STATES: frozenset[str] = frozenset({"probing"}) | DOWNLOADING_STATES
 MAX_CONCURRENCY = 5
 DEFAULT_CONCURRENCY = 2
+
+# Brief 12B: a probe's info JSON drives the download (``--load-info-json``)
+# instead of extracting the page twice. Media URLs in it expire, so it is only
+# reused when the probe finished less than this many seconds before the
+# download starts.
+REUSE_PROBE_MAX_AGE = 300.0
+# An info-JSON run that fails like this is re-run once straight from the URL.
+_STALE_INFO_CODES: frozenset[str] = frozenset(
+    {"http_403", "http_410", "format_unavailable"}
+)
+_STALE_INFO_TEXT: tuple[str, ...] = (
+    "http error 410",
+    "expired",
+    "requested format is not available",
+    "no video formats found",
+    "format is not available",
+)
 
 ALREADY_DOWNLOADED = ErrorInfo(
     "Already downloaded.", "It is in the download folder", "already_downloaded"
@@ -83,6 +102,68 @@ def _title_from(info: Any) -> str | None:
     if isinstance(title, str) and title.strip():
         return title.strip()
     return None
+
+
+def _info_is_usable(info: Any, age: float | None) -> bool:
+    """True when the probe's info dict can drive the download (brief 12B).
+
+    *age* is how many seconds passed between the probe finishing and the
+    download starting. A story tray is probed flat, so a playlist dict must
+    download from its URL instead.
+    """
+    if not isinstance(info, dict):
+        return False
+    if info.get("_type") == "playlist":
+        return False
+    if not (info.get("formats") or info.get("url")):
+        return False
+    return age is not None and 0 <= age < REUSE_PROBE_MAX_AGE
+
+
+def _write_info_json(path: Path, info: Mapping[str, Any]) -> bool:
+    """Write *info* to *path*, readable only by the owner (mode 0600).
+
+    The probe JSON can hold signed media URLs and request headers, so the file
+    is created fresh (never through a symlink) with mode 0600 and the caller
+    deletes it after the attempt. Returns False when it could not be written.
+    """
+    try:
+        path.unlink(missing_ok=True)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(path, flags, 0o600)
+    except OSError:
+        return False
+    try:
+        stream = os.fdopen(fd, "w", encoding="utf-8")
+    except OSError:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        _unlink_quietly(path)
+        return False
+    try:
+        with stream:
+            json.dump(info, stream)
+    except (OSError, TypeError, ValueError):
+        _unlink_quietly(path)
+        return False
+    return True
+
+
+def _unlink_quietly(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _is_stale_info_failure(error: ErrorInfo, raw: str) -> bool:
+    """True when a failure looks like an expired/refused media URL (brief 12B)."""
+    if error.code in _STALE_INFO_CODES:
+        return True
+    lowered = raw.lower()
+    return any(text in lowered for text in _STALE_INFO_TEXT)
 
 
 class _ReadOnlyArchive:
@@ -196,6 +277,8 @@ class DownloadQueue:
         sleep: Callable[[float], None] = time.sleep,
         run_download: Callable[..., Any] = runner.run,
         probe_url: Callable[..., dict[str, Any]] = runner.probe,
+        reuse_probe: bool = True,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.history = history
         self.archive = archive
@@ -210,6 +293,8 @@ class DownloadQueue:
         self._sleep = sleep
         self._run_download = run_download
         self._probe_url = probe_url
+        self._reuse_probe = bool(reuse_probe)
+        self._clock = clock
         self._concurrency = _check_concurrency(concurrency)
 
         self._items: dict[int, QueueItem] = {}
@@ -681,9 +766,11 @@ class DownloadQueue:
             self._set_state(item, "probing")
 
         info: Mapping[str, Any] | None = None
+        probed_at: float | None = None
         error: ErrorInfo | None = None
         try:
             info = self.probe(item.url)
+            probed_at = self._clock()
         except runner.ProbeError as exc:
             # Same wording rules as a failed download: the site, not "Instagram".
             error = apply_context(exc.info, item.url, self._cookies_configured())
@@ -712,7 +799,7 @@ class DownloadQueue:
                 if not self._running or item.state != "probing":
                     return None
                 self._set_state(item, "downloading")
-            error, _raw = self._download(item)
+            error, _raw = self._download(item, info, probed_at)
 
         if error is None:
             return None
@@ -753,12 +840,56 @@ class DownloadQueue:
             self._set_state(item, "failed", error=error)
             return None
 
-    def _download(self, item: QueueItem) -> tuple[ErrorInfo | None, str]:
-        """Run one yt-dlp download.
+    def _download(
+        self,
+        item: QueueItem,
+        info: Mapping[str, Any] | None = None,
+        probed_at: float | None = None,
+    ) -> tuple[ErrorInfo | None, str]:
+        """Run the download for one attempt.
 
         Returns ``(None, raw)`` on success and on a user pause/cancel, and
-        ``(ErrorInfo, raw)`` for a real failure.
+        ``(ErrorInfo, raw)`` for a real failure. When the probe's *info* is
+        usable the run loads it (``--load-info-json``) instead of extracting
+        the page again; if that run fails the way an expired media URL does,
+        one more run goes straight from the URL (no retry count, no backoff).
         """
+        info_path: Path | None = None
+        if self._reuse_probe:
+            age = None if probed_at is None else self._clock() - probed_at
+            if info is not None and _info_is_usable(info, age):
+                candidate = self.temp_dir / f"{item.id}.info.json"
+                try:
+                    self.temp_dir.mkdir(parents=True, exist_ok=True)
+                except OSError:
+                    pass
+                if _write_info_json(candidate, info):
+                    info_path = candidate
+        if info_path is None:
+            error, raw, _progressed = self._download_once(item, None)
+            return error, raw
+        try:
+            error, raw, progressed = self._download_once(item, info_path)
+        finally:
+            _unlink_quietly(info_path)
+        if error is None:
+            return None, raw
+        # Re-run from the URL when the info run died before any progress or
+        # failed like an expired/refused media URL; anything else is final.
+        if progressed and not _is_stale_info_failure(error, raw):
+            return error, raw
+        with self._cond:
+            if not self._running or item.state not in DOWNLOADING_STATES:
+                return error, raw
+            if item.state != "downloading":
+                self._set_state(item, "downloading")
+        error, raw, _progressed = self._download_once(item, None)
+        return error, raw
+
+    def _download_once(
+        self, item: QueueItem, info_path: Path | None
+    ) -> tuple[ErrorInfo | None, str, bool]:
+        """One yt-dlp run; the last value says whether a progress line arrived."""
         path_file = self.temp_dir / f"item-{item.id}.path"
         try:
             self.temp_dir.mkdir(parents=True, exist_ok=True)
@@ -785,10 +916,17 @@ class DownloadQueue:
             path_file=path_file,
             cookies_browser=cookies_browser,
             cookies_file=cookies_file,
+            info_json=info_path,
         )
-        handle = self._run_download(
-            opts, lambda event: self._on_progress(item, event)
-        )
+        progressed = False
+
+        def on_event(event: Any) -> None:
+            nonlocal progressed
+            if isinstance(event, Mapping) and event.get("type") == "progress":
+                progressed = True
+            self._on_progress(item, event)
+
+        handle = self._run_download(opts, on_event)
         with self._cond:
             item.handle = handle
             stop_now = item.state in ("paused", "cancelled")
@@ -803,7 +941,7 @@ class DownloadQueue:
             item.handle = None
             if item.state in ("paused", "cancelled"):
                 self._discard(path_file)
-                return None, raw
+                return None, raw, progressed
 
         if returncode == 0 and not terminated:
             reported = self._read_path_file(path_file)
@@ -814,15 +952,15 @@ class DownloadQueue:
                     if item.state in DOWNLOADING_STATES:
                         item.error = ALREADY_DOWNLOADED
                         self._set_state(item, "skipped", error=ALREADY_DOWNLOADED)
-                return None, raw
+                return None, raw, progressed
             path = reported or self._find_output(item)
             with self._cond:
                 item.file_path = path
                 item.percent = 100.0
                 self._set_state(item, "done", file_path=path)
-            return None, raw
+            return None, raw, progressed
         self._discard(path_file)
-        return explain(raw, item.url, self._cookies_configured()), raw
+        return explain(raw, item.url, self._cookies_configured()), raw, progressed
 
     @staticmethod
     def _read_path_file(path_file: Path) -> str | None:

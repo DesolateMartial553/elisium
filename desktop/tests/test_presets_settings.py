@@ -26,6 +26,17 @@ def test_presets_table() -> None:
     assert presets.DEFAULT_ID == "best"
 
 
+def test_m4a_and_opus_presets_prefer_a_stream_that_needs_no_re_encoding() -> None:
+    m4a, opus = presets.PRESETS["audio-m4a"], presets.PRESETS["audio-opus"]
+    assert m4a.format_selector == "bestaudio[ext=m4a]/bestaudio/best"
+    assert opus.format_selector == "bestaudio[acodec=opus]/bestaudio/best"
+    assert m4a.extra_args == ("-x", "--audio-format", "m4a")
+    assert opus.extra_args == ("-x", "--audio-format", "opus")
+    # MP3 and FLAC must encode, so they keep the plain selector.
+    for fmt in ("mp3", "flac"):
+        assert presets.PRESETS[f"audio-{fmt}"].format_selector == "bestaudio/best"
+
+
 def test_unknown_preset_falls_back_to_best() -> None:
     assert presets.get("nope") is presets.PRESETS["best"]
     assert presets.get(None) is presets.PRESETS["best"]

@@ -401,7 +401,7 @@ def test_add_selected_queues_each_entry_with_its_own_url(make_playlist, ui_queue
     assert PLAYLIST_URL not in urls
     for item in ui_queue.items():
         internal = ui_queue._items[item["id"]]
-        assert internal.format_selector == "bestaudio/best"
+        assert internal.format_selector == "bestaudio[ext=m4a]/bestaudio/best"
         assert internal.extra_args == ("-x", "--audio-format", "m4a")
     assert dialog.added_count == 3 and dialog.known_count == 0
     assert len(added[0]) == 3 and dialog.result() == QDialog.DialogCode.Accepted

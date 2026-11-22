@@ -933,3 +933,214 @@ def test_public_probe_uses_injected_probe_and_ytdlp(harness) -> None:
 def test_ytdlp_property_is_the_configured_path(harness) -> None:
     h = harness()
     assert isinstance(h.queue.ytdlp, str) and h.queue.ytdlp
+
+
+# -- extract once: reuse the probe's info JSON (brief 12B) ------------------
+FORMATS_PROBE: dict[str, Any] = {
+    "id": VIDEO_ID,
+    "title": "Video title",
+    "formats": [{"format_id": "18", "url": "https://media.example/v.mp4"}],
+}
+
+# The fake rejects the info-JSON run the way an expired media URL does.
+EXPIRED_INFO_BODY = "\n".join(
+    [
+        "if '--load-info-json' in argv:",
+        "    print('ERROR: unable to download video data: HTTP Error 403: Forbidden', file=sys.stderr)",
+        "    sys.exit(1)",
+        SUCCESS_BODY,
+    ]
+)
+
+
+def _run_one(h: Harness, url: str = URL) -> dict:
+    item = h.queue.add(url)
+    h.queue.start()
+    assert h.queue.wait_until_idle(15)
+    return h.queue.item(item["id"])
+
+
+def _url_argv(h: Harness, item_id: int) -> list[str]:
+    """The argv today's code builds for the same item (no info JSON)."""
+    from elisium_downloader.engine.runner import DownloadOptions, build_command
+
+    return build_command(
+        DownloadOptions(
+            url=URL,
+            output_dir=h.out,
+            temp_dir=h.tmp,
+            archive_path=h.archive.path,
+            ytdlp=h.queue.ytdlp,
+            path_file=h.tmp / f"item-{item_id}.path",
+        )
+    )[1:]
+
+
+def test_usable_probe_drives_the_download_without_the_url(harness) -> None:
+    h = harness(
+        probe_info=FORMATS_PROBE,
+        body="\n".join(
+            [
+                "import os",
+                "if '--load-info-json' in argv:",
+                "    path = argv[argv.index('--load-info-json') + 1]",
+                "    data = json.load(open(path))",
+                "    assert data['id'] == 'dQw4w9WgXcQ'",
+                "    with open(path + '.mode', 'w') as fh:",
+                "        fh.write(oct(os.stat(path).st_mode & 0o777))",
+                SUCCESS_BODY,
+            ]
+        ),
+    )
+    done = _run_one(h)
+    assert done["state"] == "done"
+    (argv,) = h.downloads()
+    path = argv[argv.index("--load-info-json") + 1]
+    assert path == str(h.tmp / f"{done['id']}.info.json")
+    assert URL not in argv
+    # Same argv as the URL run apart from the info flag and the URL.
+    assert [a for a in _url_argv(h, done["id"]) if a != URL] == [
+        a for i, a in enumerate(argv) if a != "--load-info-json" and argv[i - 1] != "--load-info-json"
+    ]
+    assert (h.tmp / f"{done['id']}.info.json.mode").read_text() == "0o600"
+    assert not (h.tmp / f"{done['id']}.info.json").exists()  # deleted afterwards
+
+
+def test_reuse_probe_off_keeps_todays_argv_byte_for_byte(harness) -> None:
+    h = harness(probe_info=FORMATS_PROBE, body=SUCCESS_BODY, reuse_probe=False)
+    done = _run_one(h)
+    assert done["state"] == "done"
+    (argv,) = h.downloads()
+    assert argv == _url_argv(h, done["id"])
+    assert "--load-info-json" not in argv
+    assert argv[-1] == URL
+    assert list(h.tmp.glob("*.info.json")) == []
+
+
+@pytest.mark.parametrize(
+    "probe",
+    [
+        {"_type": "playlist", "id": "p", "title": "Tray", "formats": [{"format_id": "1"}]},
+        {"id": VIDEO_ID, "title": "No formats"},
+        {"id": VIDEO_ID, "title": "Empty", "formats": []},
+    ],
+    ids=["playlist", "no-formats", "empty-formats"],
+)
+def test_unusable_probe_downloads_from_the_url(harness, probe) -> None:
+    h = harness(probe_info=probe, body=SUCCESS_BODY)
+    done = _run_one(h)
+    assert done["state"] == "done"
+    (argv,) = h.downloads()
+    assert argv == _url_argv(h, done["id"])
+
+
+def test_a_non_dict_probe_downloads_from_the_url(harness) -> None:
+    seen: list = []
+
+    def fake_run(opts, on_event):
+        seen.append(opts)
+        return FakeHandle()
+
+    h = harness(probe_url=lambda url, ytdlp="yt-dlp", **kw: ["not", "a", "dict"], run_download=fake_run)
+    _run_one(h)
+    assert seen and seen[0].info_json is None
+
+
+def test_an_old_probe_is_not_reused(harness) -> None:
+    ticks = {"n": 0}
+
+    def clock() -> float:
+        ticks["n"] += 1
+        return 0.0 if ticks["n"] == 1 else 400.0  # probe done at 0, download starts at 400
+
+    h = harness(probe_info=FORMATS_PROBE, body=SUCCESS_BODY, clock=clock)
+    done = _run_one(h)
+    assert done["state"] == "done"
+    (argv,) = h.downloads()
+    assert argv == _url_argv(h, done["id"])
+
+
+def test_a_fresh_probe_is_reused_just_under_the_limit(harness) -> None:
+    ticks = {"n": 0}
+
+    def clock() -> float:
+        ticks["n"] += 1
+        return 0.0 if ticks["n"] == 1 else 299.0
+
+    h = harness(probe_info=FORMATS_PROBE, body=SUCCESS_BODY, clock=clock)
+    _run_one(h)
+    (argv,) = h.downloads()
+    assert "--load-info-json" in argv
+
+
+def test_expired_info_json_reruns_once_from_the_url(harness) -> None:
+    h = harness(probe_info=FORMATS_PROBE, body=EXPIRED_INFO_BODY)
+    done = _run_one(h)
+
+    assert done["state"] == "done"
+    first, second = h.downloads()
+    assert "--load-info-json" in first and URL not in first
+    assert "--load-info-json" not in second and second[-1] == URL
+    assert second == _url_argv(h, done["id"])
+    assert h.sleeps == []  # no backoff
+    assert h.queue._items[done["id"]].attempts == 0  # not counted as a retry
+    assert h.row({"record_id": done["record_id"]})["state"] == "done"
+    assert list(h.tmp.glob("*.info.json")) == []
+
+
+def test_info_run_that_exits_before_any_progress_reruns_once(harness) -> None:
+    body = "\n".join(
+        [
+            "if '--load-info-json' in argv:",
+            "    print('ERROR: something odd with the loaded info', file=sys.stderr)",
+            "    sys.exit(2)",
+            SUCCESS_BODY,
+        ]
+    )
+    h = harness(probe_info=FORMATS_PROBE, body=body)
+    done = _run_one(h)
+    assert done["state"] == "done"
+    assert len(h.downloads()) == 2
+    assert h.sleeps == []
+    assert list(h.tmp.glob("*.info.json")) == []
+
+
+def test_the_url_rerun_is_only_one_and_its_failure_is_final(harness) -> None:
+    body = "print('ERROR: unable to download video data: HTTP Error 403: Forbidden', file=sys.stderr)"
+    h = harness(probe_info=FORMATS_PROBE, body=body, code=1)
+    failed = _run_one(h)
+    assert failed["state"] == "failed"
+    assert failed["error"]["code"] == "http_403"
+    assert len(h.downloads()) == 2
+    assert h.sleeps == []
+    assert list(h.tmp.glob("*.info.json")) == []
+
+
+def test_other_failure_after_progress_is_not_rerun(harness) -> None:
+    body = "\n".join(
+        [
+            progress({"status": "downloading", "downloaded_bytes": 1, "total_bytes": 9}),
+            "print('ERROR: something else broke', file=sys.stderr)",
+        ]
+    )
+    h = harness(probe_info=FORMATS_PROBE, body=body, code=1)
+    failed = _run_one(h)
+    assert failed["state"] == "failed"
+    assert len(h.downloads()) == 1
+    assert list(h.tmp.glob("*.info.json")) == []
+
+
+def test_info_file_is_removed_when_the_run_cannot_start(harness) -> None:
+    seen: list = []
+
+    def boom(opts, on_event):
+        seen.append(opts.info_json)
+        raise OSError("no yt-dlp")
+
+    h = harness(probe_info=FORMATS_PROBE, run_download=boom)
+    item = h.queue.add(URL)
+    h.queue.start()
+    assert h.queue.wait_until_idle(15)
+    assert h.queue.item(item["id"])["state"] == "failed"
+    assert seen and seen[0] is not None
+    assert list(h.tmp.glob("*.info.json")) == []
