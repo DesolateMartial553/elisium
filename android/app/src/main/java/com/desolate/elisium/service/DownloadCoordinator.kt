@@ -11,6 +11,12 @@ import com.desolate.elisium.engine.ACTIVE_STATES
 import com.desolate.elisium.engine.DownloadQueue
 import com.desolate.elisium.engine.Presets
 import com.desolate.elisium.engine.TERMINAL_STATES
+import com.desolate.elisium.backend.ProcessFfmpegSession
+import com.desolate.elisium.media.HttpFileDownloader
+import com.desolate.elisium.media.HttpMediaFetcher
+import com.desolate.elisium.media.MediaEngine
+import com.desolate.elisium.media.UrlConnectionTransport
+import java.io.File
 import com.desolate.elisium.settings.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -60,7 +66,19 @@ class DownloadCoordinator(
     private var unmetered = false
     private var currentNetwork: Network? = null
 
+    /** The media engine (photo posts, stories, slideshows): our own client, ffmpeg from the youtubedl-android module. */
+    private fun mediaEngine(): MediaEngine {
+        val nativeDir = File(appContext.applicationInfo.nativeLibraryDir)
+        val packages = File(appContext.noBackupFilesDir, "youtubedl-android/packages")
+        return MediaEngine(
+            fetcher = HttpMediaFetcher(UrlConnectionTransport()),
+            downloader = HttpFileDownloader(UrlConnectionTransport()),
+            ffmpeg = { ProcessFfmpegSession.create(nativeDir, packages) },
+        )
+    }
+
     fun start() {
+        queue.setMediaEngine(mediaEngine())
         scope.launch(start = CoroutineStart.UNDISPATCHED) { queue.events.collect { batch.onEvent(it) } }
         scope.launch {
             settings.settings.collect { s ->
@@ -69,6 +87,8 @@ class DownloadCoordinator(
                 val preset = Presets.get(s.presetId)
                 queue.setFormatSelector(preset.formatSelector)
                 queue.setExtraArgs(preset.extraArgs)
+                queue.setPhotoMode(s.photoMode)
+                queue.setSongLength(s.songLength)
                 synchronized(netLock) {
                     wifiOnly = s.wifiOnly
                     notifyOnDone = s.notifyOnDone

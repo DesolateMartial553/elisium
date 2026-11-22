@@ -43,6 +43,9 @@ class RoomHistoryStore(
         dao.update(applyStateUpdate(row, state, errorCode, errorMessage, filePath, clearError, now())) > 0
     }
 
+    override fun updateExtras(recordId: Long, note: String?, filesTotal: Int?): Boolean =
+        synchronized(lock) { dao.updateExtras(recordId, note, filesTotal) > 0 }
+
     override fun get(recordId: Long): HistoryRecord? = dao.get(recordId)?.toRecord()
 
     override fun search(text: String, limit: Int?): List<HistoryRecord> {

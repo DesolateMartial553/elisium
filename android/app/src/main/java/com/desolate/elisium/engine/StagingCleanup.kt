@@ -1,6 +1,7 @@
 package com.desolate.elisium.engine
 
 import java.io.File
+import java.security.MessageDigest
 
 /*
  * Cleanup of the staging folder (`filesDir/staging`): yt-dlp writes finished files there and keeps
@@ -36,6 +37,26 @@ fun deleteItemLeftovers(stagingDir: File, processId: String, videoId: String?, k
     return deleted
 }
 
+/**
+ * The media engine's folder for one item: `staging/media/<sha1(identity)[:16]>`. Stable for one link, so a restart
+ * resumes in the same folder, and two items can never share files (item ids restart at 1 every launch).
+ */
+fun mediaDirFor(stagingDir: File, identity: String): File {
+    val digest = MessageDigest.getInstance("SHA-1").digest(identity.toByteArray(Charsets.UTF_8))
+    val hex = digest.joinToString("") { "%02x".format(it) }.take(16)
+    return File(File(stagingDir, "media"), hex)
+}
+
+/** Deletes [dir] and what is inside it (files and one level of work folders). Never throws. */
+fun deleteDirectory(dir: File): Boolean {
+    return try {
+        dir.walkBottomUp().forEach { it.delete() }
+        !dir.exists()
+    } catch (_: Exception) {
+        false
+    }
+}
+
 /** Seven days: orphans (files no queue item owns any more) older than this are removed at app start. */
 const val ORPHAN_MAX_AGE_MS: Long = 7L * 24 * 60 * 60 * 1000
 
@@ -51,6 +72,16 @@ fun sweepOrphans(stagingDir: File, maxAgeMs: Long = ORPHAN_MAX_AGE_MS, now: Long
         for (file in files) {
             if (file.isFile && now - file.lastModified() > maxAgeMs && file.delete()) deleted++
         }
+    }
+    // The media engine's per-item folders: old files go, and a folder left empty goes with them.
+    for (itemDir in File(stagingDir, "media").listFiles().orEmpty()) {
+        if (!itemDir.isDirectory) continue
+        for (file in itemDir.walkBottomUp()) {
+            if (file == itemDir) continue
+            if (file.isFile && now - file.lastModified() > maxAgeMs && file.delete()) deleted++
+            else if (file.isDirectory && file.list().isNullOrEmpty()) file.delete()
+        }
+        if (itemDir.list().isNullOrEmpty()) itemDir.delete()
     }
     return deleted
 }

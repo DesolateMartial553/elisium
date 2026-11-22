@@ -6,14 +6,14 @@ data class ErrorInfo(val message: String, val fix: String, val code: String)
 private val FALLBACK = ErrorInfo("Download failed.", "See Details", "unknown")
 
 // Instagram wording (used when there is no URL to judge, or it is Instagram).
-private val IG_SIGNED_IN = ErrorInfo(
+internal val IG_SIGNED_IN = ErrorInfo(
     "Instagram needs you signed in.",
     "Sign in to Instagram in Settings > Accounts",
     "login_required",
 )
 // The site wants a sign-in but is not Instagram: same code, no site name.
 private val SIGNED_IN = ErrorInfo("The site wants you to be signed in.", IG_SIGNED_IN.fix, "login_required")
-private val IG_RATE = ErrorInfo(
+internal val IG_RATE = ErrorInfo(
     "Instagram is limiting requests. Wait a few minutes and try again.",
     "Wait a few minutes and try again",
     "rate_limited",
@@ -24,6 +24,25 @@ private val SESSION_EXPIRED = ErrorInfo(
     "Your Instagram sign-in has expired.",
     "Sign in to Instagram in Settings > Accounts",
     "session_expired",
+)
+
+// Media engine (photo posts, stories, slideshows): same words as the desktop `errors.py`.
+val STORY_EXPIRED = ErrorInfo(
+    "This story has expired. Stories last 24 hours.",
+    "Check the link",
+    "story_expired",
+)
+val PRIVATE_ACCOUNT = ErrorInfo(
+    "This account is private. Follow it in your browser, then sign in here.",
+    "Follow the account in your browser, then sign in in Settings > Accounts",
+    "private_account",
+)
+
+/** The media engine ran and found nothing it could save (no error text to go on). */
+val NO_MEDIA_FILES = ErrorInfo(
+    "There are no photos or videos to download here.",
+    "Check the link",
+    "no_media",
 )
 
 // Order matters: first match wins (same order as the spec table).

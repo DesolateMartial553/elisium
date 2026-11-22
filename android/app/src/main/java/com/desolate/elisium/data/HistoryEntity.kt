@@ -18,8 +18,11 @@ data class HistoryEntity(
     @ColumnInfo(name = "file_path") val filePath: String?,
     @ColumnInfo(name = "created_at") val createdAt: String,
     @ColumnInfo(name = "finished_at") val finishedAt: String?,
+    /** Added in database version 2; null on rows made before it. */
+    val note: String? = null,
+    @ColumnInfo(name = "files_total") val filesTotal: Int? = null,
 ) {
     fun toRecord() = HistoryRecord(
-        id, url, videoKey, title, state, errorCode, errorMessage, filePath, createdAt, finishedAt,
+        id, url, videoKey, title, state, errorCode, errorMessage, filePath, createdAt, finishedAt, note, filesTotal,
     )
 }

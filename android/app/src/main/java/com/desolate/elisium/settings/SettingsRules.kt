@@ -3,6 +3,8 @@ package com.desolate.elisium.settings
 import com.desolate.elisium.engine.DEFAULT_CONCURRENCY
 import com.desolate.elisium.engine.MAX_CONCURRENCY
 import com.desolate.elisium.engine.Presets
+import com.desolate.elisium.media.PhotoMode
+import com.desolate.elisium.media.SongLength
 
 /** Which Afterglow theme to show: follow the system, or force Nightfall / Daybreak. */
 enum class Appearance(val storedValue: String) {
@@ -29,6 +31,10 @@ data class Settings(
     val reduceMotion: Boolean = false,
     /** Timestamp of the last yt-dlp auto-update check, in ms since epoch. Default 0 (never checked). */
     val lastYtDlpCheck: Long = 0L,
+    /** "Photo posts with a song": photos + song + video (default), photos + song, or photos only. */
+    val photoMode: PhotoMode = PhotoMode.PhotosSongVideo,
+    /** "Song length": the post's snippet (default) or the full track. */
+    val songLength: SongLength = SongLength.Snippet,
 )
 
 private val LIMIT_RE = Regex("^\\d+(\\.\\d+)?[KMG]?$")

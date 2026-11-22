@@ -9,6 +9,8 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.desolate.elisium.media.PhotoMode
+import com.desolate.elisium.media.SongLength
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -26,6 +28,10 @@ interface SettingsStore {
     suspend fun setAppearance(value: Appearance)
     suspend fun setReduceMotion(value: Boolean)
     suspend fun setLastYtDlpCheck(value: Long)
+
+    /** Photo-post settings (data layer for the 10E screens); the defaults make a store without them still work. */
+    suspend fun setPhotoMode(value: PhotoMode) {}
+    suspend fun setSongLength(value: SongLength) {}
 }
 
 /**
@@ -80,6 +86,14 @@ class SettingsRepository(context: Context) : SettingsStore {
         store.edit { it[LAST_YTDLP_CHECK] = value.coerceAtLeast(0L) }
     }
 
+    override suspend fun setPhotoMode(value: PhotoMode) {
+        store.edit { it[PHOTO_MODE] = value.storedValue }
+    }
+
+    override suspend fun setSongLength(value: SongLength) {
+        store.edit { it[SONG_LENGTH] = value.storedValue }
+    }
+
     private fun Preferences.toSettings() = Settings(
         concurrency = this[CONCURRENCY] ?: Settings().concurrency,
         speedLimit = this[SPEED_LIMIT],
@@ -89,6 +103,8 @@ class SettingsRepository(context: Context) : SettingsStore {
         appearance = Appearance.fromStored(this[APPEARANCE]),
         reduceMotion = this[REDUCE_MOTION] ?: Settings().reduceMotion,
         lastYtDlpCheck = this[LAST_YTDLP_CHECK] ?: 0L,
+        photoMode = PhotoMode.fromStored(this[PHOTO_MODE]),
+        songLength = SongLength.fromStored(this[SONG_LENGTH]),
     ).validated()
 
     private companion object {
@@ -100,5 +116,7 @@ class SettingsRepository(context: Context) : SettingsStore {
         val APPEARANCE = stringPreferencesKey("appearance")
         val REDUCE_MOTION = booleanPreferencesKey("reduce_motion")
         val LAST_YTDLP_CHECK = longPreferencesKey("last_ytdlp_check")
+        val PHOTO_MODE = stringPreferencesKey("photo_mode")
+        val SONG_LENGTH = stringPreferencesKey("song_length")
     }
 }

@@ -28,6 +28,9 @@ interface HistoryDao {
     @Query("SELECT * FROM downloads ORDER BY id DESC LIMIT :limit")
     fun recent(limit: Int): List<HistoryEntity>
 
+    @Query("UPDATE downloads SET note = :note, files_total = :filesTotal WHERE id = :id")
+    fun updateExtras(id: Long, note: String?, filesTotal: Int?): Int
+
     @Query("DELETE FROM downloads WHERE id = :id")
     fun delete(id: Long): Int
 }

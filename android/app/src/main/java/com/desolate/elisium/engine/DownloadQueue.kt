@@ -1,5 +1,11 @@
 package com.desolate.elisium.engine
 
+import com.desolate.elisium.media.CancelToken
+import com.desolate.elisium.media.MediaEngine
+import com.desolate.elisium.media.MediaRoute
+import com.desolate.elisium.media.PhotoMode
+import com.desolate.elisium.media.SongLength
+import com.desolate.elisium.media.routeFor
 import java.io.File
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -43,8 +49,8 @@ const val DEFAULT_FORMAT = "bestvideo*+bestaudio/best"
 
 val ALREADY_DOWNLOADED = ErrorInfo("Already downloaded.", "It is in the download folder", "already_downloaded")
 private val UNKNOWN = ErrorInfo("Download failed.", "See Details", "unknown")
-private val PUBLISH_FAILED = ErrorInfo("Could not save the file.", "Check free storage space", "publish_failed")
-private val STORAGE_PERMISSION = ErrorInfo("Elisium needs storage permission to save files.", "Allow storage access in Settings, then tap Retry", "storage_permission")
+internal val PUBLISH_FAILED = ErrorInfo("Could not save the file.", "Check free storage space", "publish_failed")
+internal val STORAGE_PERMISSION = ErrorInfo("Elisium needs storage permission to save files.", "Allow storage access in Settings, then tap Retry", "storage_permission")
 
 /** History id used when the database refused the insert (disk full): the item still runs from memory. */
 private const val NO_RECORD = -1L
@@ -72,6 +78,15 @@ data class QueueItem(
     val speed: Double?,
     val eta: Double?,
     val percent: Double?,
+    /** The card's picture (http/https link): from the yt-dlp probe or the media plan. Display only, never in history. */
+    val thumbnail: String? = null,
+    /** "6 photos + song" or "1080p MP4": the kind of download, in plain words (display only). */
+    val formatLabel: String? = null,
+    /** Media engine items only: files finished / planned (null for yt-dlp items). */
+    val filesDone: Int? = null,
+    val filesTotal: Int? = null,
+    /** A plain-words line under the card ("Already saved", a song note). */
+    val note: String? = null,
 )
 
 sealed interface QueueEvent {
@@ -107,6 +122,17 @@ private class Entry(
     var speed: Double? = null
     var eta: Double? = null
     var percent: Double? = null
+    var thumbnail: String? = null
+    var formatLabel: String? = null
+    var filesDone: Int? = null
+    var filesTotal: Int? = null
+    var note: String? = null
+
+    /** "Download again anyway": the media archive is ignored for this item's runs. */
+    var force = false
+
+    /** yt-dlp said `no_media` once: later attempts go straight to the media engine. */
+    var mediaOnly = false
     var handle: DownloadHandle? = null
     var owned = false
     var archiveKey: String? = null
@@ -120,6 +146,7 @@ private class Entry(
     fun snapshot() = QueueItem(
         id, recordId, url, identity, videoKey, state, title, filePath, attempts, error,
         stage, downloadedBytes, totalBytes, speed, eta, percent,
+        thumbnail, formatLabel, filesDone, filesTotal, note,
     )
 }
 
@@ -139,11 +166,16 @@ class DownloadQueue(
     concurrency: Int = DEFAULT_CONCURRENCY,
     formatSelector: String = DEFAULT_FORMAT,
     limitRate: String? = null,
+    /** The media engine's own archive (`media-archive.txt` beside the yt-dlp one: yt-dlp never writes to it). */
+    private val mediaArchive: Archive = Archive(File(archive.file.absoluteFile.parentFile ?: File("."), "media-archive.txt")),
 ) {
     private var formatSelector: String = formatSelector
     private var limitRate: String? = limitRate
     private var extraArgs: List<String> = emptyList()
     private var cookiesFile: File? = null
+    private var mediaEngine: MediaEngine? = null
+    private var photoMode: PhotoMode = PhotoMode.PhotosSongVideo
+    private var songLength: SongLength = SongLength.Snippet
     private var concurrencyValue: Int = checkConcurrency(concurrency)
 
     private val entries = HashMap<Int, Entry>()
@@ -194,6 +226,15 @@ class DownloadQueue(
      */
     fun setCookiesFile(file: File?) = lock.withLock { cookiesFile = file }
 
+    /** Turns on the media engine (photo posts, carousels, stories, TikTok slideshows); null turns it off. */
+    fun setMediaEngine(engine: MediaEngine?) = lock.withLock { mediaEngine = engine }
+
+    /** "Photo posts with a song" for runs that start afterwards. */
+    fun setPhotoMode(mode: PhotoMode) = lock.withLock { photoMode = mode }
+
+    /** "Song length" for runs that start afterwards. */
+    fun setSongLength(length: SongLength) = lock.withLock { songLength = length }
+
     /** The cookies file when it is really there: yt-dlp must not be told to read a missing path. */
     private fun activeCookiesFile(): File? = lock.withLock { cookiesFile?.takeIf { it.isFile } }
 
@@ -222,6 +263,7 @@ class DownloadQueue(
         formatSelector: String? = null,
         extraArgs: List<String>? = null,
         title: String? = null,
+        force: Boolean = false,
     ): QueueItem {
         require(url.isNotBlank()) { "url must be a non-empty string" }
         val clean = url.pyStrip()
@@ -233,7 +275,11 @@ class DownloadQueue(
             val existing = byIdentity[identity]
             if (existing != null) {
                 val found = entries.getValue(existing)
-                if (found.state in setOf("done", "skipped") && !filePresent(found)) {
+                if (force && found.state in TERMINAL_STATES && routeFor(found.url) != MediaRoute.YTDLP) {
+                    // "Download again anyway": a photo post or story runs again without the media archive.
+                    found.force = true
+                    requeueMissing(found)
+                } else if (found.state in setOf("done", "skipped") && !filePresent(found)) {
                     requeueMissing(found)
                 } else if (found.state == "failed" || found.state == "cancelled") {
                     requeueFinished(found) // pasting a failed or cancelled link again means "try again"
@@ -250,6 +296,7 @@ class DownloadQueue(
             entry.title = title?.pyStrip()?.ifEmpty { null }
             entry.formatSelector = formatSelector?.ifEmpty { null }
             entry.extraArgs = extraArgs?.toList()
+            entry.force = force && routeFor(clean) != MediaRoute.YTDLP
             entries[entry.id] = entry
             order.add(entry.id)
             byIdentity[identity] = entry.id
@@ -412,6 +459,9 @@ class DownloadQueue(
         e.totalBytes = null
         e.speed = null
         e.eta = null
+        e.filesDone = null
+        e.filesTotal = null
+        e.note = null
     }
 
     /** Caller holds the lock. */
@@ -450,15 +500,16 @@ class DownloadQueue(
     private fun downloading(): Boolean = entries.values.any { it.state in DOWNLOADING_STATES }
 
     // -- internals: staging cleanup ----------------------------------------
-    private class StageRef(val processId: String, val videoId: String?)
+    private class StageRef(val processId: String, val videoId: String?, val identity: String)
 
     /** Caller holds the state lock. */
     private fun stageRef(e: Entry) =
-        StageRef("item-${e.id}", (e.videoKey ?: e.archiveKey)?.let { splitKey(it)?.second })
+        StageRef("item-${e.id}", (e.videoKey ?: e.archiveKey)?.let { splitKey(it)?.second }, e.identity)
 
     private fun cleanupStaging(ref: StageRef, keepPartial: Boolean) {
         try {
             deleteItemLeftovers(stagingDir, ref.processId, ref.videoId, keepPartial)
+            if (!keepPartial) deleteDirectory(mediaDirFor(stagingDir, ref.identity))
         } catch (_: Exception) {
         }
     }
@@ -521,6 +572,7 @@ class DownloadQueue(
             e.stage = null
             setState(e, "probing")
         }
+        if (routeOf(e) == MediaRoute.MEDIA) return runMediaAttempt(e)
 
         var info: JsonObject? = null
         var error: ErrorInfo? = null
@@ -538,9 +590,13 @@ class DownloadQueue(
             learnArchiveKey(e, info)
             expectedBytesFrom(info)?.let { bytes -> lock.withLock { e.expectedBytes = bytes } }
             val title = titleFrom(info)
-            if (title != null) {
+            val thumbnail = thumbnailFrom(info)
+            val label = formatLabelFrom(info, lock.withLock { e.extraArgs ?: extraArgs })
+            if (title != null || thumbnail != null || label != null) {
                 lock.withLock {
-                    e.title = title
+                    if (title != null) e.title = title
+                    e.thumbnail = thumbnail ?: e.thumbnail
+                    e.formatLabel = label ?: e.formatLabel
                     _events.tryEmit(QueueEvent.ItemUpdated(e.id, e.snapshot()))
                     publishState()
                 }
@@ -570,7 +626,144 @@ class DownloadQueue(
             error = download(e)
         }
         if (error == null) return null
+        if (error.code == "no_media" && routeOf(e) == MediaRoute.YTDLP_THEN_MEDIA) {
+            // yt-dlp found no video in the post: the same attempt re-runs once on the media engine (no retry counted).
+            val switched = lock.withLock {
+                if (running && e.state in ACTIVE_STATES) {
+                    e.mediaOnly = true
+                    if (e.state != "probing") setState(e, "probing")
+                    true
+                } else {
+                    false
+                }
+            }
+            if (switched) return runMediaAttempt(e)
+        }
         return afterFailure(e, error)
+    }
+
+    private fun routeOf(e: Entry): MediaRoute = lock.withLock {
+        when {
+            mediaEngine == null -> MediaRoute.YTDLP
+            e.mediaOnly -> MediaRoute.MEDIA
+            else -> routeFor(e.url)
+        }
+    }
+
+    /**
+     * The media-engine attempt (state is `probing`): photo posts, carousels, stories, highlights and TikTok
+     * slideshows. Same contract as [download]: null on success or a user pause/cancel, else the error.
+     */
+    private suspend fun runMediaAttempt(e: Entry): Long? {
+        val engine = lock.withLock { mediaEngine } ?: return afterFailure(e, UNKNOWN)
+        val cancelToken = CancelToken()
+        val attemptToken = Any()
+        val cookies = activeCookiesFile()
+        val request = lock.withLock {
+            if (!running || e.state != "probing") return null
+            e.token = attemptToken
+            e.handle = object : DownloadHandle {
+                override suspend fun await(): DownloadOutcome = throw UnsupportedOperationException("media items run inline")
+                override fun cancel() = cancelToken.cancel()
+            }
+            MediaRunRequest(e.url, cookies, e.force, photoMode, songLength, mediaDirFor(stagingDir, e.identity))
+        }
+        val hooks = object : MediaHooks {
+            override fun planned(title: String?, thumbnail: String?, formatLabel: String?, filesTotal: Int): Boolean =
+                lock.withLock {
+                    if (!running || e.state != "probing") return@withLock false
+                    title?.let { e.title = it }
+                    e.thumbnail = thumbnail ?: e.thumbnail
+                    e.formatLabel = formatLabel ?: e.formatLabel
+                    e.filesDone = 0
+                    e.filesTotal = filesTotal
+                    _events.tryEmit(QueueEvent.ItemUpdated(e.id, e.snapshot()))
+                    setState(e, "downloading")
+                    true
+                }
+
+            override fun progress(done: Int, total: Int) {
+                lock.withLock {
+                    if (e.token !== attemptToken || e.state !in ACTIVE_STATES) return
+                    e.filesDone = done
+                    e.filesTotal = total
+                    e.percent = if (total > 0) (done * 100.0 / total).coerceAtMost(100.0) else null
+                    _events.tryEmit(QueueEvent.ProgressChanged(e.id, e.state, e.snapshot()))
+                    publishState()
+                }
+            }
+
+            override fun converting() {
+                lock.withLock {
+                    if (e.token === attemptToken && e.state in DOWNLOADING_STATES) {
+                        e.stage = "converting"
+                        setState(e, "converting")
+                    }
+                }
+            }
+
+            override fun stopped(): Boolean = lock.withLock { !running || e.state !in ACTIVE_STATES }
+        }
+        val outcome: MediaOutcome = try {
+            stagingDir.mkdirs()
+            MediaRunner(engine, mediaArchive, outputStore).run(request, hooks, cancelToken)
+        } catch (c: CancellationException) {
+            cancelToken.cancel()
+            throw c
+        } catch (_: Exception) {
+            MediaOutcome.Failed(UNKNOWN)
+        }
+
+        var ref: StageRef? = null
+        val verdict = lock.withLock {
+            e.handle = null
+            e.token = null
+            ref = stageRef(e)
+            when {
+                outcome is MediaOutcome.Done || outcome is MediaOutcome.Skipped -> 0 // already moved: the item is finished
+                e.state == "cancelled" -> 2
+                e.state == "paused" || e.state == "queued" -> 1
+                else -> 0
+            }
+        }
+        if (verdict == 2) ref?.let { cleanupStaging(it, keepPartial = false) }
+        if (verdict != 0) return null
+        when (outcome) {
+            is MediaOutcome.Stopped -> return null
+            is MediaOutcome.Failed -> return afterFailure(e, outcome.error)
+            is MediaOutcome.Done -> lock.withLock {
+                if (e.state !in TERMINAL_STATES) {
+                    e.filePath = outcome.firstLocation
+                    e.percent = 100.0
+                    e.filesTotal = outcome.filesTotal
+                    e.filesDone = outcome.filesTotal
+                    e.note = outcome.note
+                    e.error = null
+                    e.force = false
+                    setState(e, "done", filePath = outcome.firstLocation, clearError = true)
+                    saveExtras(e)
+                }
+            }
+            is MediaOutcome.Skipped -> lock.withLock {
+                if (e.state !in TERMINAL_STATES) {
+                    e.error = ALREADY_DOWNLOADED
+                    e.filesTotal = outcome.filesTotal
+                    e.note = outcome.note
+                    e.force = false
+                    setState(e, "skipped", error = ALREADY_DOWNLOADED)
+                    saveExtras(e)
+                }
+            }
+        }
+        return null
+    }
+
+    /** Writes the post's note and file count to its history row. Caller holds the state lock. */
+    private fun saveExtras(e: Entry) {
+        try {
+            history.updateExtras(e.recordId, e.note, e.filesTotal)
+        } catch (_: Exception) {
+        }
     }
 
     private fun learnArchiveKey(e: Entry, info: JsonObject) {

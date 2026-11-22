@@ -57,6 +57,13 @@ class FakeHistory : HistoryStore {
     }
 
     @Synchronized
+    override fun updateExtras(recordId: Long, note: String?, filesTotal: Int?): Boolean {
+        val old = rows[recordId] ?: return false
+        rows[recordId] = old.copy(note = note, filesTotal = filesTotal)
+        return true
+    }
+
+    @Synchronized
     override fun get(recordId: Long): HistoryRecord? = rows[recordId]
 
     @Synchronized

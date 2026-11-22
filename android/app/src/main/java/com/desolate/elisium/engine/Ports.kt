@@ -84,6 +84,17 @@ interface OutputStore {
     /** Moves the finished file to its final place; null on failure. */
     suspend fun publish(stagedFile: File, displayName: String): PublishedFile?
 
+    /**
+     * Moves the finished file into the owner's subfolder of the output location (media engine files:
+     * `Download/Elisium/<owner>/`). The default ignores [subfolder] and saves flat, so a store that has
+     * not learned folders yet still works.
+     */
+    suspend fun publish(stagedFile: File, displayName: String, subfolder: String?): PublishedFile? =
+        publish(stagedFile, displayName)
+
+    /** Is a finished file whose name contains `[<videoId>]` already in [subfolder] (flat by default)? */
+    fun existsInFolder(subfolder: String?, videoId: String): Boolean = existsFor("", videoId)
+
     /** Deletes a file this store published (used when the item was cancelled during the copy). False when unsupported. */
     fun delete(location: String): Boolean = false
 
@@ -103,6 +114,10 @@ data class HistoryRecord(
     val filePath: String?,
     val createdAt: String,
     val finishedAt: String?,
+    /** A plain-words line the post's row shows (for example "Already saved"); null for older rows. */
+    val note: String? = null,
+    /** How many files the post had; null for single-file downloads and older rows. */
+    val filesTotal: Int? = null,
 )
 
 interface HistoryStore {
@@ -125,6 +140,9 @@ interface HistoryStore {
         filePath: String? = null,
         clearError: Boolean = false,
     ): Boolean
+
+    /** Stores the post's [note] and [filesTotal]; false for an unknown id (or a store without these columns). */
+    fun updateExtras(recordId: Long, note: String?, filesTotal: Int?): Boolean = false
 
     fun get(recordId: Long): HistoryRecord?
     fun search(text: String, limit: Int? = 200): List<HistoryRecord>
