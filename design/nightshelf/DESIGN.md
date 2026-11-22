@@ -48,7 +48,7 @@ Inter is no longer the typeface. Anything not listed in the tokens.
   Waiting: "Waiting" in `faint` + size or "Starts next". Failed: the plain reason in `negative` and one inverted pill for the
   fix ("Sign in", "Retry"). Done: "Done" in `positive` + "Open · Show in folder".
 - **History and Settings:** same ground/surface/raised steps and the same row anatomy; settings are grouped lists on `surface`
-  with one setting per row. Mock these up in 11B round 2 before 11C builds them.
+  with one setting per row. Approved by the owner 2026-11-22: https://claude.ai/artifact/KpTfdZAD13xd6qPYApJM8F (History: grouped by day, search, site filter, Open / Show in folder / Download again; Settings: Downloads, Photos and music, Accounts, Appearance, About).
 - **Mark:** three stacked rounded bars getting shorter (a queue), the last one in `hue`. Launcher icon: the same mark on a black square.
 
 ## Motion
