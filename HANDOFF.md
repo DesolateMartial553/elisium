@@ -43,8 +43,15 @@ Workflow: OpenCode implements one brief from `briefs/`; Claude audits the diff a
 | 9B | OpenCode (Claude-launched) | Claude: pass (Android 400 tests 0 failures, lint OK, APK builds; login code read) | In-app Instagram WebView sign-in -> cookies.txt via existing CookieJar; Advanced section keeps picker. WebView behaviour UNVERIFIED on a phone. |
 | 9C | OpenCode (hit free limit, wrote seam/policy draft) then Sonnet subagent | Claude: pass (Android 422 tests 0 failures, lint OK, APK builds; updater/policy/startup read) | Android yt-dlp auto-update (24 h, Wi-Fi gate, idle only) + Settings button. Real update call UNVERIFIED on a phone. |
 | 9D | Sonnet subagent (OpenCode out of free usage) | Claude: pass (desktop full suite rerun, contrast ALL PASS; browsers.py privacy review) | Desktop: read-only detector for a signed-in Instagram browser, Accounts hint, Sign-in dialog with retry. Real Firefox/Chrome DB layouts + Hyprland dialog UNVERIFIED. |
+| 10A | OpenCode (Claude-launched, finished without hitting its limit) | Claude: pass (Android 457 tests 0 failures, lint 0 errors, rerun by Claude; parser code read, no network/logging in media/) | Route (c) own Kotlin client recommended; bundled Python lacks requests/certifi; QuickJS is bundled; ffmpeg runnable via ProcessBuilder; library yt-dlp is 2025.11.12 (auto-update covers it). |
 |---|---|---|---|
 
 ## Owner actions pending
 - `sudo pacman -S pyside6` (needed before Phase 2).
 - Confirm Android package ID (default `com.desolate.elisiumdownloader`).
+
+## Phases 10-12 (started 2026-11-22, branch `phase10-12`)
+Plans: `~/.claude/plans/elisium-posts-images-music-stories.md` (10), `elisium-redesign-phase11.md` (11), `elisium-speed-phase12.md` (12).
+Order: W1 10A (OpenCode) || 11A (Claude mockups) -> W2 12A bench (no build running) + owner picks direction -> 11B
+-> W3 12B, 10B (needs `sudo pacman -S gallery-dl`), 11C, 10C -> W4 10D, 11D, 10E -> W5 10G, 12C/12D (after aria2 answer), 12E
+-> W6 12F, 10F + 11E docs, release only on owner yes. One heavy job at a time (2 cores).
