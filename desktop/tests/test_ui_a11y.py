@@ -69,21 +69,19 @@ def focus_name() -> str:
 def test_tab_order_through_the_main_window(win) -> None:
     win.add_text("https://a.com/1")
     win.table.selectRow(0)  # Pause and Cancel become enabled, so they take focus
-    win.url_edit.setFocus()
+    win.nav.setFocus()
     pump()
     seen = [focus_name()]
-    for _ in range(8):
+    for _ in range(10):
         QTest.keyClick(QApplication.focusWidget(), Qt.Key.Key_Tab)
         seen.append(focus_name())
-    assert seen[:9] == [
-        "Video link", "Paste", "Add", "Options", "Sections", "Downloads",
-        "Pause https://a.com/1", "Cancel https://a.com/1",  # the selected card's own buttons
-        "Pause",
+    assert seen[:11] == [
+        "Sections", "Video link", "Paste", "Add", "Options", "All: 1", "Downloads",
+        "Pause https://a.com/1", "Cancel https://a.com/1",  # the selected row's own buttons
+        "Pause", "Cancel",  # then the unchanged toolbar
     ]
     QTest.keyClick(QApplication.focusWidget(), Qt.Key.Key_Tab)
-    assert focus_name() == "Cancel"  # then the unchanged toolbar
-    QTest.keyClick(QApplication.focusWidget(), Qt.Key.Key_Tab)
-    assert focus_name() == "Video link"  # wraps round
+    assert focus_name() == "Sections"  # wraps round
 
 
 def test_tab_leaves_the_table_instead_of_walking_cells(win) -> None:
@@ -122,7 +120,7 @@ def test_ctrl_1_2_3_switch_sections(win) -> None:
     for number, index in ((2, 1), (3, 2), (1, 0)):
         QTest.keyClick(win, Qt.Key(Qt.Key.Key_0.value + number), Qt.KeyboardModifier.ControlModifier)
         assert win.stack.currentIndex() == index
-        assert win.sidebar.currentRow() == index
+        assert win.nav.currentRow() == index
 
 
 def test_f1_opens_the_cheat_sheet(win) -> None:
@@ -502,7 +500,7 @@ def test_main_history_settings_fit_at_200_percent(big_text, qapp, ui_queue, tmp_
         history = window.history_page.table
         assert history.verticalHeader().defaultSectionSize() >= \
             window.history_page.delegate.row_height(history.font())
-        assert window.sidebar.width() >= window.sidebar.fontMetrics().horizontalAdvance("Downloads")
+        assert window.nav.width() >= window.nav.fontMetrics().horizontalAdvance("Downloads")
         window.hide()
     finally:
         window.bridge.close()

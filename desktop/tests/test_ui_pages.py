@@ -33,7 +33,7 @@ def wait_until(pred, timeout: float = 3.0) -> bool:
     return pred()
 
 
-# -- sidebar ---------------------------------------------------------------
+# -- top bar section links ---------------------------------------------------------------
 @pytest.fixture
 def window(qapp, ui_queue, tmp_path):
     win = MainWindow(ui_queue, settings_path=tmp_path / "s.json", version_fn=lambda: "2099.1.1")
@@ -42,16 +42,16 @@ def window(qapp, ui_queue, tmp_path):
     win.deleteLater()
 
 
-def test_sidebar_switches_pages(window) -> None:
-    assert window.sidebar.accessibleName() == "Sections"
-    assert [window.sidebar.item(i).text() for i in range(3)] == ["Downloads", "History", "Settings"]
+def test_section_links_switch_pages(window) -> None:
+    assert window.nav.accessibleName() == "Sections"
+    assert [window.nav.item(i).text() for i in range(3)] == ["Downloads", "History", "Settings"]
     assert window.stack.currentIndex() == 0
-    window.sidebar.setCurrentRow(1)
+    window.nav.setCurrentRow(1)
     assert window.stack.currentWidget() is window.history_page
-    window.sidebar.setCurrentRow(2)
+    window.nav.setCurrentRow(2)
     assert window.stack.currentWidget() is window.settings_page
     window.show_section(0)
-    assert window.sidebar.currentRow() == 0
+    assert window.nav.currentRow() == 0
     assert window.table.parentWidget() is window.stack.currentWidget()
 
 

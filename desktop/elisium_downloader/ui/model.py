@@ -2,18 +2,35 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, QObject, Qt
+from PySide6.QtCore import (
+    QAbstractTableModel,
+    QModelIndex,
+    QObject,
+    QSortFilterProxyModel,
+    Qt,
+)
 
 __all__ = [
     "DownloadModel",
     "COLUMNS",
+    "FILTERS",
+    "FILTER_LABELS",
     "PERCENT_ROLE",
+    "RowText",
+    "STATE_WORD",
     "STATUS_TEXT",
+    "StateFilterProxy",
+    "describe_row",
+    "eta_text",
+    "filter_of",
     "format_bytes",
     "format_speed",
     "format_eta",
+    "site_name",
 ]
 
 COLUMNS = ("Title", "Status", "Progress", "Speed", "ETA", "Size")
@@ -32,6 +49,31 @@ STATUS_TEXT = {
     "failed": "✖ Failed",
     "skipped": "⏭ Skipped",
     "cancelled": "⊘ Cancelled",
+}
+# Night shelf row wording: plain words, no icons (the Downloads rows draw these).
+STATE_WORD = {
+    "queued": "Waiting",
+    "probing": "Checking",
+    "downloading": "Downloading",
+    "merging": "Merging",
+    "converting": "Converting",
+    "paused": "Paused",
+    "done": "Done",
+    "failed": "Failed",
+    "skipped": "Skipped",
+    "cancelled": "Cancelled",
+}
+# The count cards above the list: key -> the queue states it shows.
+FILTERS = ("all", "downloading", "waiting", "failed", "done")
+FILTER_LABELS = {
+    "all": "All", "downloading": "Downloading", "waiting": "Waiting",
+    "failed": "Failed", "done": "Done",
+}
+_FILTER_STATES = {
+    "downloading": frozenset({"probing", "downloading", "merging", "converting"}),
+    "waiting": frozenset({"queued", "paused"}),
+    "failed": frozenset({"failed"}),
+    "done": frozenset({"done"}),
 }
 _WORD = {
     "queued": "queued",
@@ -113,6 +155,151 @@ def _eta_words(value: float) -> str:
     return " ".join(parts) + " left"
 
 
+def eta_text(value: float | None) -> str:
+    """Time left in the Night shelf style: ``7 s``, ``1 min 37 s``, ``1 h 5 min``."""
+    if value is None or value < 0:
+        return ""
+    total = int(round(value))
+    hours, rest = divmod(total, 3600)
+    minutes, seconds = divmod(rest, 60)
+    if hours:
+        return f"{hours} h {minutes} min" if minutes else f"{hours} h"
+    if minutes:
+        return f"{minutes} min {seconds} s" if seconds else f"{minutes} min"
+    return f"{seconds} s"
+
+
+_SITES = (
+    ("youtube.com", "YouTube"), ("youtu.be", "YouTube"), ("instagram.com", "Instagram"),
+    ("tiktok.com", "TikTok"), ("vimeo.com", "Vimeo"), ("soundcloud.com", "SoundCloud"),
+    ("twitter.com", "X"), ("x.com", "X"), ("facebook.com", "Facebook"), ("twitch.tv", "Twitch"),
+)
+
+
+def site_name(url: str | None) -> str:
+    """A short, friendly site name for a link (``YouTube``), else the plain host."""
+    host = (urlsplit(url or "").hostname or "").lower()
+    for suffix, name in _SITES:
+        if host == suffix or host.endswith("." + suffix):
+            return name
+    return host[4:] if host.startswith("www.") else host
+
+
+def filter_of(state: str) -> str | None:
+    """The count card a state is counted under (``None``: only in All)."""
+    for key, states in _FILTER_STATES.items():
+        if state in states:
+            return key
+    return None
+
+
+@dataclass(frozen=True)
+class RowText:
+    """Everything a Downloads row says, as plain text (the delegate only paints it)."""
+
+    meta: str          # "YouTube · 648.5 MB"
+    big: str           # "37%" or a state word ("Waiting", "Done")
+    big_is_percent: bool
+    sub: str           # "4.2 MB/s · 1 min 37 s left"
+    tone: str          # token of the right column: muted, faint, positive, negative
+    bar: str | None    # None (no bar), "hue" or "faint"
+    pill: str | None   # the one fix a failed row offers ("Retry"; the window turns it into "Sign in")
+    note: str          # the item's remark ("" when none)
+
+
+def _size_of(row: dict[str, Any]) -> float | None:
+    progress = row.get("progress") or {}
+    return progress.get("total_bytes") or progress.get("downloaded_bytes")
+
+
+def describe_row(row: dict[str, Any]) -> RowText:
+    """Texts, tones and bar kind for one queue snapshot (states as in DESIGN.md "Row states")."""
+    state = row["state"]
+    progress = row.get("progress") or {}
+    size = format_bytes(_size_of(row))
+    files_total = progress.get("files_total")
+    meta_parts = [site_name(row.get("url"))]
+    if files_total:
+        done = progress.get("files_done") or 0
+        meta_parts.append(f"{files_total} files" if state == "done" else f"{done} of {files_total} files")
+    elif size:
+        meta_parts.append(size)
+    meta = " · ".join(p for p in meta_parts if p)
+    note = row.get("note") or ""
+    percent = DownloadModel.percent_of(row)
+    pct = "" if percent is None else f"{percent:.0f}%"
+    if state in _RUNNING:
+        bits = [t for t in (format_speed(progress.get("speed")),
+                            f"{eta_text(progress.get('eta'))} left" if progress.get("eta") is not None else "")
+                if t and t != " left"]
+        sub = " · ".join(bits) or {"merging": "Merging", "converting": "Converting"}.get(state, "Starting")
+        return RowText(meta, pct or STATE_WORD[state], bool(pct), sub, "muted", "hue", None, note)
+    if state == "paused":
+        total, got = progress.get("total_bytes"), progress.get("downloaded_bytes")
+        to_go = format_bytes(total - got) if total and got is not None and total > got else ""
+        sub = f"Paused · {to_go} to go" if to_go else "Paused"
+        return RowText(meta, pct or "Paused", bool(pct), sub, "muted", "faint" if pct else None, None, note)
+    if state == "queued":
+        return RowText(meta, "Waiting", False, size or "Starts next", "faint", None, None, note)
+    if state == "probing":
+        return RowText(meta, "Checking", False, "Looking at the link", "faint", None, None, note)
+    if state == "done":
+        return RowText(meta, "Done", False, "Open · Show in folder", "positive", None, None, note)
+    if state == "failed":
+        error = row.get("error") or {}
+        return RowText(meta, "", False, error.get("message") or "Could not finish", "negative",
+                       None, "Retry", note)
+    if state == "skipped":
+        error = row.get("error") or {}
+        return RowText(meta, "Skipped", False, error.get("message") or "", "faint", None, None, note)
+    return RowText(meta, STATE_WORD.get(state, state), False, "", "faint", None,
+                   "Retry" if state == "cancelled" else None, note)
+
+
+class StateFilterProxy(QSortFilterProxyModel):
+    """The download model seen through one count card (All, Downloading, Waiting, Failed, Done).
+
+    Never sorted, so the rows keep the queue's own order. ``snapshot_at`` and
+    ``item_id_at`` take a row of THIS model, so views and delegates can use it like
+    the source model.
+    """
+
+    def __init__(self, source: DownloadModel, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._key = "all"
+        self.setSourceModel(source)
+
+    @property
+    def filter_key(self) -> str:
+        return self._key
+
+    def set_filter(self, key: str) -> None:
+        if key not in FILTERS or key == self._key:
+            return
+        begin = getattr(self, "beginFilterChange", None)
+        if begin is not None:
+            begin()
+            self._key = key
+            self.endFilterChange()
+        else:  # PySide6 before 6.10
+            self._key = key
+            self.invalidateFilter()
+
+    def filterAcceptsRow(self, source_row: int, parent: QModelIndex) -> bool:  # noqa: N802
+        if self._key == "all":
+            return True
+        row = self.sourceModel().snapshot_at(source_row)
+        return row is not None and row["state"] in _FILTER_STATES[self._key]
+
+    def snapshot_at(self, row: int) -> dict[str, Any] | None:
+        source = self.mapToSource(self.index(row, 0))
+        return self.sourceModel().snapshot_at(source.row()) if source.isValid() else None
+
+    def item_id_at(self, row: int) -> int | None:
+        source = self.mapToSource(self.index(row, 0))
+        return self.sourceModel().item_id_at(source.row()) if source.isValid() else None
+
+
 class DownloadModel(QAbstractTableModel):
     """Rows are queue-item snapshots; fed by bridge events."""
 
@@ -189,7 +376,10 @@ class DownloadModel(QAbstractTableModel):
     def percent_of(row: dict[str, Any]) -> float | None:
         if row["state"] == "done":
             return 100.0
-        percent = (row.get("progress") or {}).get("percent")
+        progress = row.get("progress") or {}
+        percent = progress.get("percent")
+        if percent is None and progress.get("files_total"):  # photo posts count files
+            percent = 100.0 * (progress.get("files_done") or 0) / progress["files_total"]
         return None if percent is None else float(percent)
 
     @staticmethod

@@ -1,4 +1,4 @@
-"""The main window: URL bar, queue table, toolbar, status bar."""
+"""The main window: top bar (mark, section links, link field, Download), count cards, download rows, status bar."""
 
 from __future__ import annotations
 
@@ -7,8 +7,6 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-import time
-
 from PySide6.QtCore import QEvent, QObject, QPoint, QSize, QTimer, QUrl, Qt
 from PySide6.QtGui import (
     QAccessible,
@@ -16,6 +14,7 @@ from PySide6.QtGui import (
     QAction,
     QCloseEvent,
     QDesktopServices,
+    QFont,
     QFontMetrics,
     QGuiApplication,
     QIcon,
@@ -29,6 +28,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QDialogButtonBox,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -61,11 +61,12 @@ from .settings import Settings
 from .settings_page import SettingsPage
 from .sign_in_dialog import SignInDialog
 from .tray import TrayController, tray_wanted
-from .model import COLUMNS, DownloadModel
+from .model import COLUMNS, DownloadModel, StateFilterProxy, filter_of
 from .quality_dialog import dialog_scale, font_scale
+from .thumbnail import ThumbnailCache
 from .widgets import (
-    EmptyState, HorizonHeader, QueueDelegate, RowHeightKeeper, action_icon, breath,
-    enter_animation,
+    BrandMark, CountCards, EmptyState, QueueDelegate, RowHeightKeeper, action_icon,
+    enter_animation, progress_ease,
 )
 
 __all__ = ["MainWindow", "ProgressAnnouncer", "SHORTCUTS", "extract_urls"]
@@ -247,7 +248,8 @@ class ProgressAnnouncer:
 def card_action_kinds(state: str | None) -> list[str]:
     """The card buttons that make sense in *state*, in display order.
 
-    Same rules as the toolbar actions (``pause``/``resume``/``retry``/``cancel``/``open``).
+    Same rules as the toolbar actions (``pause``/``resume``/``retry``/``cancel``/``open``),
+    plus ``launch`` (open the finished file) next to ``open`` (show it in its folder).
     """
     kinds: list[str] = []
     if state in PAUSABLE:
@@ -259,20 +261,25 @@ def card_action_kinds(state: str | None) -> list[str]:
     if state in CANCELLABLE:
         kinds.append("cancel")
     if state == "done":
-        kinds.append("open")
+        kinds.extend(["launch", "open"])
     return kinds
 
 
 class CardActions(QObject):
-    """Action buttons on the hovered (else the selected) download card.
+    """Action buttons on the hovered (else the selected) download row.
 
-    ONE set of buttons lives on the table viewport and is moved to the right card;
-    a click selects that card and triggers the window's own action, so the toolbar,
+    ONE set of buttons lives on the table viewport and is moved to the right row;
+    a click selects that row and triggers the window's own action, so the toolbar,
     the menu and the shortcuts stay the single source of behaviour. Buttons are in the
     Tab order right after the list and are named "<Action> <title>".
+
+    Their look follows the row: small round icon buttons (pause, resume, cancel, retry
+    of a cancelled item), the one inverted pill of a failed row ("Retry" or "Sign in"),
+    and the "Open" and "Show in folder" links of a finished one.
     """
 
-    KINDS = ("pause", "resume", "retry", "cancel", "open")
+    KINDS = ("pause", "resume", "retry", "cancel", "launch", "open")
+    ICON_KINDS = ("pause", "resume", "retry", "cancel")
 
     def __init__(self, window: MainWindow) -> None:
         super().__init__(window)
@@ -283,13 +290,14 @@ class CardActions(QObject):
         self._actions = {
             "pause": window.pause_action, "resume": window.resume_action,
             "retry": window.retry_action, "cancel": window.cancel_action,
-            "open": window.open_action,
+            "launch": window.launch_action, "open": window.open_action,
         }
         self.buttons: dict[str, QToolButton] = {}
         viewport = self._table.viewport()
         for kind in self.KINDS:
             button = QToolButton(viewport)
             button.setObjectName("cardAction")
+            button.setProperty("role", "icon")
             button.setAutoRaise(False)
             button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
             button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
@@ -317,18 +325,25 @@ class CardActions(QObject):
 
     def _target_row(self) -> int:
         if any(b.hasFocus() for b in self.buttons.values()):
-            return self._row  # keyboard use: stay on the card being operated
+            return self._row  # keyboard use: stay on the row being operated
         if self._hover_row >= 0:
             return self._hover_row
         rows = self._table.selectionModel().selectedRows()
         return rows[0].row() if rows else -1
 
+    def _style(self, button: QToolButton, role: str) -> None:
+        if button.property("role") != role:
+            button.setProperty("role", role)
+            button.style().unpolish(button)
+            button.style().polish(button)
+
     def refresh(self, *_: object) -> None:
         had_focus = next((k for k, b in self.buttons.items() if b.hasFocus()), None)
         row = self._target_row()
-        snap = self._w.model.snapshot_at(row) if row >= 0 else None
+        proxy = self._w.proxy
+        snap = proxy.snapshot_at(row) if row >= 0 else None
         delegate = self._w.delegate
-        rect = self._table.visualRect(self._w.model.index(row, 0)) if snap else None
+        rect = self._table.visualRect(proxy.index(row, 0)) if snap else None
         if snap is None or rect is None or not rect.isValid() or not self._table.viewport().rect().intersects(rect):
             self._row = -1
             for b in self.buttons.values():
@@ -340,31 +355,60 @@ class CardActions(QObject):
         self._row = row
         kinds = card_action_kinds(snap["state"])
         title = DownloadModel.title_of(snap)
-        m = delegate.metrics(self._table.font())
-        u, pad = m["u"], m["pad"]
-        cap_h = QFontMetrics(delegate.fonts(self._table.font())[1]).height()
-        side = int(round(cap_h + 10 * u))
+        font = self._table.font()
+        m = delegate.metrics(font)
+        u = m["u"]
+        side = int(round(28 * u))
         spacing = int(round(4 * u))
-        card = delegate.card_rect(rect, u)
-        right = card.right() - pad
-        centre = card.bottom() - pad - cap_h / 2
-        total = len(kinds) * side + max(len(kinds) - 1, 0) * spacing
-        x = int(round(right)) - total
+        icons = [k for k in kinds if k in self.ICON_KINDS and snap["state"] != "failed"]
+        total = len(icons) * side + max(len(icons) - 1, 0) * spacing
+        geo = delegate.geometry(rect, snap, font, actions_width=float(total))
+        pill_text = delegate.pill_text(snap)
+        x = int(round(geo.actions_right)) - total
         for kind in self.KINDS:
             button = self.buttons[kind]
             if kind not in kinds:
                 button.hide()
                 continue
             action = self._actions[kind]
-            button.setFixedSize(side, side)
-            button.setIconSize(QSize(int(side * 0.6), int(side * 0.6)))
-            button.setIcon(action.icon())
-            button.setToolTip(f"{action.text()}: {title}")
-            button.setAccessibleName(f"{action.text()} {title}")
-            button.move(x, int(round(centre - side / 2)))
+            label = action.text()
+            description = action.toolTip()
+            if kind == "retry" and pill_text:  # a failed row: the one inverted pill
+                signing_in = pill_text == "Sign in"
+                label = pill_text
+                if signing_in:
+                    description = "Pick the browser you are signed in to, then retry"
+                self._style(button, "pill")
+                button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+                button.setText(pill_text)
+                button.setIcon(QIcon())
+                pill = geo.pill
+                button.setFixedSize(int(round(pill.width())), int(round(pill.height())))
+                button.setStyleSheet(f"QToolButton {{ border-radius: {int(pill.height() // 2)}px; }}")
+                button.move(int(round(pill.left())), int(round(pill.top())))
+            elif kind in ("launch", "open"):
+                link = geo.link_open if kind == "launch" else geo.link_folder
+                self._style(button, "link")
+                button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+                button.setText("Open" if kind == "launch" else "Show in folder")
+                button.setIcon(QIcon())
+                button.setFixedSize(int(round(link.width())), int(round(link.height())))
+                button.move(int(round(link.left())), int(round(link.top())))
+            else:
+                self._style(button, "icon")
+                button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+                button.setText("")
+                button.setStyleSheet("")
+                button.setFixedSize(side, side)
+                button.setIconSize(QSize(int(side * 0.6), int(side * 0.6)))
+                button.setIcon(action.icon())
+                button.move(x, int(round(geo.centre_y - side / 2)))
+                x += side + spacing
+            button.setToolTip(f"{label}: {title}")
+            button.setAccessibleDescription(description)
+            button.setAccessibleName(f"{label} {title}")
             button.show()
             button.raise_()
-            x += side + spacing
         delegate.actions_row_id, delegate.actions_width = snap["id"], float(total)
         self._table.viewport().update()
         self._restore_focus(had_focus)
@@ -382,11 +426,15 @@ class CardActions(QObject):
 
     # -- doing -----------------------------------------------------------
     def activate(self, kind: str) -> None:
-        """Select the card the buttons are on, then run the window's own action."""
+        """Select the row the buttons are on, then run the window's own action."""
         if self._row < 0:
             return
         if [r.row() for r in self._table.selectionModel().selectedRows()] != [self._row]:
             self._table.selectRow(self._row)
+        if kind == "retry" and self.buttons["retry"].property("role") == "pill" \
+                and self.buttons["retry"].text() == "Sign in":
+            self._w.open_sign_in_dialog()
+            return
         self._actions[kind].trigger()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
@@ -464,44 +512,85 @@ class MainWindow(QMainWindow):
 
     # -- construction ----------------------------------------------------
     def _build_ui(self) -> None:
-        downloads_page = QWidget(self)
-        layout = QVBoxLayout(downloads_page)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
-
-        row = QHBoxLayout()
-        row.setSpacing(8)
+        # Top bar: the mark, the section links, then the link field and the Download pill.
         self.url_edit = QLineEdit()
-        self.url_edit.setPlaceholderText("Paste a video link")
+        self.url_edit.setObjectName("linkField")
+        self.url_edit.setPlaceholderText("Paste a link from YouTube, Instagram, TikTok…")
         self.url_edit.setClearButtonEnabled(True)
         self.url_edit.setAccessibleName("Video link")
         self.url_edit.setAccessibleDescription(
             "Type or paste one or more video links, then press Enter to add them."
         )
         self.paste_button = QPushButton("Paste")
+        self.paste_button.setProperty("quiet", True)
         self.paste_button.setAccessibleName("Paste")
         self.paste_button.setAccessibleDescription(
             "Add the links from the clipboard to the download list."
         )
-        self.add_button = QPushButton("Add")
+        self.add_button = QPushButton("Download")
+        self.add_button.setObjectName("downloadButton")
         self.add_button.setProperty("primary", True)
+        # The name stays "Add" (brief 11C-1: every accessible name is kept).
         self.add_button.setAccessibleName("Add")
         self.add_button.setAccessibleDescription(
             "Add the link in the box to the download list."
         )
-        row.addWidget(self.url_edit, 1)
-        row.addWidget(self.paste_button)
         self.options_button = QPushButton("Options...")
+        self.options_button.setProperty("quiet", True)
         self.options_button.setAccessibleName("Options")
         self.options_button.setAccessibleDescription(
             "Check the link and choose the quality before adding it."
         )
-        row.addWidget(self.add_button)
-        row.addWidget(self.options_button)
-        layout.addLayout(row)
 
+        self.nav = QListWidget()
+        self.nav.setObjectName("nav")
+        self.nav.setFlow(QListWidget.Flow.LeftToRight)
+        self.nav.setWrapping(False)
+        self.nav.setFrameShape(QFrame.Shape.NoFrame)
+        self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.nav.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.nav.setAccessibleName("Sections")
+        self.nav.setAccessibleDescription(
+            "Switch between Downloads, History and Settings with the left and right arrow keys."
+        )
+        for name in SECTIONS:
+            self.nav.addItem(name)
+        self.nav.setCurrentRow(0)
+        self.nav.currentRowChanged.connect(self.show_section)
+
+        self.brand = BrandMark()
+        self.top_bar = QWidget(self)
+        self.top_bar.setObjectName("topBar")
+        bar = QHBoxLayout(self.top_bar)
+        bar.setContentsMargins(int(theme.SPACE["gutter"]), 0, int(theme.SPACE["gutter"]), 0)
+        bar.setSpacing(int(theme.SPACE["gap"]))
+        bar.addWidget(self.brand)
+        bar.addSpacing(14)
+        bar.addWidget(self.nav)
+        bar.addStretch(1)
+        self.url_edit.setMinimumWidth(160)
+        self.url_edit.setMaximumWidth(380)
+        bar.addWidget(self.url_edit, 100)
+        bar.addWidget(self.paste_button)
+        bar.addWidget(self.add_button)
+        bar.addWidget(self.options_button)
+        self.bar_rule = QFrame(self)
+        self.bar_rule.setObjectName("barRule")
+        self.bar_rule.setFixedHeight(1)
+        self.bar_rule.setAccessibleName("")
+        self.bar_rule.hide()  # appears only once the list scrolls
+
+        # Downloads page: count cards (filters), the rows, then the quiet action toolbar.
+        downloads_page = QWidget(self)
+        layout = QVBoxLayout(downloads_page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(int(theme.SPACE["gap"]))
+        self.cards = CountCards()
+        layout.addWidget(self.cards)
+
+        self.proxy = StateFilterProxy(self.model, self)
         self.table = QTableView()
-        self.table.setModel(self.model)
+        self.table.setModel(self.proxy)
         self.table.setAccessibleName("Downloads")
         self.table.setAccessibleDescription(
             "List of downloads with status, progress, speed, time left and size."
@@ -510,9 +599,14 @@ class MainWindow(QMainWindow):
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setObjectName("cards")
-        # Cards: one delegate paints the whole row into column 0; the other
+        self.table.setFrameShape(QFrame.Shape.NoFrame)
+        # Rows: one delegate paints the whole row into column 0; the other
         # columns stay in the model (accessible text, tests) but are hidden.
         self.delegate = QueueDelegate(self.table)
+        self.delegate.sign_in_codes = SIGN_IN_CODES
+        self.thumbnails = ThumbnailCache(self._thumbnail_fetcher, self)
+        self.thumbnails.ready.connect(self._repaint_rows)
+        self.delegate.thumbnails = self.thumbnails
         self.table.setItemDelegateForColumn(0, self.delegate)
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setVisible(False)
@@ -530,6 +624,8 @@ class MainWindow(QMainWindow):
         self.empty_state = EmptyState(self.table.viewport())
         layout.addWidget(self.table, 1)
         self._downloads_layout = layout
+        self.cards.filterChanged.connect(self._on_filter)
+        self.table.verticalScrollBar().valueChanged.connect(self._on_scrolled)
 
         self.history_page = HistoryPage(self.queue, self.bridge)
         self.settings_page = SettingsPage(
@@ -541,28 +637,15 @@ class MainWindow(QMainWindow):
         for page in (downloads_page, self.history_page, self.settings_page):
             self.stack.addWidget(page)
 
-        self.sidebar = QListWidget()
-        self.sidebar.setObjectName("sidebar")
-        self.sidebar.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.sidebar.setAccessibleName("Sections")
-        self.sidebar.setAccessibleDescription(
-            "Switch between Downloads, History and Settings with the arrow keys."
-        )
-        for name in SECTIONS:
-            self.sidebar.addItem(name)
-        self.sidebar.setCurrentRow(0)
-        self.sidebar.currentRowChanged.connect(self.show_section)
-
         central = QWidget(self)
         frame = QVBoxLayout(central)
         frame.setContentsMargins(0, 0, 0, 0)
         frame.setSpacing(0)
-        self.header = HorizonHeader()
-        frame.addWidget(self.header)
+        frame.addWidget(self.top_bar)
+        frame.addWidget(self.bar_rule)
         outer = QHBoxLayout()
-        outer.setContentsMargins(12, 8, 16, 8)
-        outer.setSpacing(12)
-        outer.addWidget(self.sidebar)
+        outer.setContentsMargins(int(theme.SPACE["gutter"]), int(theme.SPACE["gap"]),
+                                 int(theme.SPACE["gutter"]), int(theme.SPACE["gap"]))
         outer.addWidget(self.stack, 1)
         frame.addLayout(outer, 1)
         self.setCentralWidget(central)
@@ -629,6 +712,10 @@ class MainWindow(QMainWindow):
             "Open folder", "folder-open", sp.SP_DirOpenIcon,
             "Open the folder with the finished file", self.open_folder,
         )
+        self.launch_action = self._make_action(
+            "Open", "document-open", sp.SP_FileIcon,
+            "Open the finished file", self.launch_selected,
+        )
         self.copy_action = QAction("Copy link", self)
         self.copy_action.setToolTip("Copy the video link to the clipboard")
         self.copy_action.triggered.connect(self.copy_link)
@@ -646,18 +733,32 @@ class MainWindow(QMainWindow):
             button.setAccessibleName(action.text())
             button.setAccessibleDescription(action.toolTip())
             button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
-        self._downloads_layout.insertWidget(1, self.toolbar)
+        self._downloads_layout.addWidget(self.toolbar)
         self.card_actions = CardActions(self)
         self._apply_icons()
         theme.notifier().changed.connect(self._on_theme_changed)
-        breath().valueChanged.connect(self._breathe)
-        # One shared animation drives every new card's enter (fade + rise).
+        # One shared animation drives every new row's enter (fade + 6 px rise) and one
+        # eases the bars; neither loops, and both are off with reduced motion.
         self.model.rowsInserted.connect(self._on_rows_inserted)
         enter_animation().valueChanged.connect(self._on_enter_tick)
-        self._last_repaint = 0.0
+        progress_ease().valueChanged.connect(self._on_enter_tick)
 
     def _on_enter_tick(self, *_: object) -> None:
         self.table.viewport().update()
+
+    def _repaint_rows(self) -> None:
+        self.table.viewport().update()
+
+    def _on_filter(self, key: str) -> None:
+        """A count card was chosen: show only those downloads."""
+        self.proxy.set_filter(key)
+        self.card_actions.refresh()
+        self._update_summary()
+        self._update_actions()
+
+    def _on_scrolled(self, value: int) -> None:
+        """The 1 px rule under the top bar shows only once the list has scrolled."""
+        self.bar_rule.setVisible(value > 0 and self.stack.currentIndex() == 0)
 
     def _on_rows_inserted(self, _parent: Any, first: int, last: int) -> None:
         for row in range(first, last + 1):
@@ -679,13 +780,6 @@ class MainWindow(QMainWindow):
         self._apply_icons()
         self.table.viewport().update()
         self.history_page.table.viewport().update()
-
-    def _breathe(self, *_: object) -> None:
-        """Repaint the cards a few times a second while the glow breathes."""
-        now = time.monotonic()
-        if now - self._last_repaint >= 0.06 and self.table.isVisible():
-            self._last_repaint = now
-            self.table.viewport().update()
 
     def _build_shortcuts(self) -> None:
         def shortcut(keys: str, slot: Any, widget: QWidget, context: Qt.ShortcutContext) -> QShortcut:
@@ -724,8 +818,8 @@ class MainWindow(QMainWindow):
 
     def _wire_tab_order(self) -> None:
         widgets: list[QWidget] = [
-            self.url_edit, self.paste_button, self.add_button, self.options_button,
-            self.sidebar, self.table,
+            self.nav, self.url_edit, self.paste_button, self.add_button, self.options_button,
+            *self.cards.cards.values(), self.table,
         ]
         widgets.extend(self.card_actions.buttons[k] for k in CardActions.KINDS)
         for action in (
@@ -738,14 +832,22 @@ class MainWindow(QMainWindow):
 
     # -- text size -------------------------------------------------------
     def _fit_to_font(self) -> None:
-        """Size the sidebar and the cards from the text size (so 200% fits)."""
+        """Size the top bar, the section links and the rows from the text size (so 200% fits)."""
         fm = QFontMetrics(self.font())
-        pad = fm.height() // 2 + 8
         self.row_heights.update()
         self.table.setMinimumWidth(fm.horizontalAdvance("M") * 24 + self.table.frameWidth() * 2)
-        self.sidebar.setFixedWidth(
-            max(160, max(fm.horizontalAdvance(name) for name in SECTIONS) + pad * 4 + 8)
-        )
+        bar_h = max(int(theme.SIZE["topBar"]), fm.height() + 20, self.nav.minimumSizeHint().height())
+        self.top_bar.setFixedHeight(bar_h)
+        link_font = QFont(self.font())
+        link_font.setWeight(QFont.Weight.DemiBold)
+        lfm = QFontMetrics(link_font)
+        width = 0
+        for row in range(self.nav.count()):
+            item = self.nav.item(row)
+            w = lfm.horizontalAdvance(item.text()) + 28
+            item.setSizeHint(QSize(w, bar_h))
+            width += w
+        self.nav.setFixedSize(width + 8, bar_h)
 
     def changeEvent(self, event: QEvent) -> None:
         super().changeEvent(event)
@@ -761,9 +863,10 @@ class MainWindow(QMainWindow):
         if not 0 <= index < self.stack.count():
             return
         self.stack.setCurrentIndex(index)
-        if self.sidebar.currentRow() != index:
-            self.sidebar.setCurrentRow(index)
+        if self.nav.currentRow() != index:
+            self.nav.setCurrentRow(index)
         self.toolbar.setVisible(index == 0)
+        self.bar_rule.setVisible(index == 0 and self.table.verticalScrollBar().value() > 0)
         if index == 1:
             self.history_page.refresh()
 
@@ -863,8 +966,19 @@ class MainWindow(QMainWindow):
                 counts[key] += 1
         text = ", ".join(f"{n} {name}" for name, n in counts.items() if n)
         self.summary_label.setText(text or "No downloads")
-        breath().set_active(counts["downloading"] > 0)
-        self.empty_state.setVisible(self.model.rowCount() == 0)
+        card_counts = {"all": self.model.rowCount()}
+        for row in range(self.model.rowCount()):
+            key = filter_of(self.model.snapshot_at(row)["state"])
+            if key:
+                card_counts[key] = card_counts.get(key, 0) + 1
+        self.cards.set_counts(card_counts)
+        self.empty_state.setVisible(self.proxy.rowCount() == 0)
+        self.empty_state.text = (
+            "Paste a link from YouTube, Instagram, TikTok…" if self.model.rowCount() == 0
+            else f"No {self.cards.cards[self.proxy.filter_key].label.lower()} downloads right now"
+        )
+        self.empty_state.setAccessibleDescription(self.empty_state.text)
+        self.empty_state.update()
         if self.tray is not None:
             self.tray.update_tooltip(self.summary_label.text())
 
@@ -883,7 +997,7 @@ class MainWindow(QMainWindow):
         rows = self.table.selectionModel().selectedRows()
         if not rows:
             return None
-        return self.model.snapshot_at(rows[0].row())
+        return self.proxy.snapshot_at(rows[0].row())
 
     def _update_actions(self) -> None:
         snap = self.selected_snapshot()
@@ -893,6 +1007,7 @@ class MainWindow(QMainWindow):
         self.retry_action.setEnabled(state in RETRYABLE)
         self.cancel_action.setEnabled(state in CANCELLABLE)
         self.open_action.setEnabled(state == "done")
+        self.launch_action.setEnabled(state == "done")
         self.copy_action.setEnabled(snap is not None)
 
     # -- adding links ----------------------------------------------------
@@ -1134,6 +1249,17 @@ class MainWindow(QMainWindow):
             if parent.is_dir():
                 folder = parent
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+    def launch_selected(self) -> None:
+        """Open the finished file with the desktop's default app (the folder if it is gone)."""
+        snap = self.selected_snapshot()
+        if snap is None or snap["state"] != "done":
+            return
+        file_path = snap.get("file_path")
+        if file_path and Path(file_path).is_file():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(file_path))
+        else:
+            self.open_folder()
 
     def copy_link(self) -> None:
         snap = self.selected_snapshot()

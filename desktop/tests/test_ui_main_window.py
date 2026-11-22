@@ -28,7 +28,7 @@ def pump() -> None:
 
 def test_title_and_accessible_names(window) -> None:
     assert window.windowTitle() == "Elisium"
-    assert window.url_edit.placeholderText() == "Paste a video link"
+    assert window.url_edit.placeholderText() == "Paste a link from YouTube, Instagram, TikTok…"
     for widget in (window.url_edit, window.paste_button, window.add_button, window.table, window.toolbar):
         assert widget.accessibleName()
     for action in (window.pause_action, window.resume_action, window.retry_action,
@@ -264,21 +264,8 @@ def test_default_probe_goes_through_the_queues_public_probe(window, ui_queue) ->
     assert ui_queue.ytdlp == "yt-dlp"
 
 
-def test_narrow_cards_drop_low_priority_info_first(window) -> None:
-    from PySide6.QtGui import QFontMetrics
-
-    from elisium_downloader.ui.widgets import caption_parts, visible_parts
-
-    row = {"state": "downloading", "progress": {"speed": 4_000_000.0, "eta": 80,
-                                                 "total_bytes": 52_428_800}}
-    parts = caption_parts(row)
-    assert [k for k, _t in parts] == ["speed", "size", "eta"]
-    fm = QFontMetrics(window.font())
-    assert [k for k, _t in visible_parts(parts, fm, 2000)] == ["speed", "size", "eta"]
-    assert [k for k, _t in visible_parts(parts, fm, 150)] == ["speed", "eta"] or \
-        [k for k, _t in visible_parts(parts, fm, 150)] == ["speed"]
-    assert [k for k, _t in visible_parts(parts, fm, 1)] == []
-    # the table keeps one visible column (the card); the rest stay in the model
+def test_the_table_keeps_one_visible_column(window) -> None:
+    # the table keeps one visible column (the row); the rest stay in the model
     assert not window.table.isColumnHidden(0)
     assert window.table.isColumnHidden(1)
 
@@ -299,7 +286,7 @@ from elisium_downloader.ui.widgets import enter_animation  # noqa: E402
     ("paused", ["resume", "cancel"]),
     ("failed", ["retry"]),
     ("cancelled", ["retry"]),
-    ("done", ["open"]),
+    ("done", ["launch", "open"]),
     ("skipped", []),
 ])
 def test_card_action_kinds_per_state(state, kinds, window) -> None:
@@ -308,11 +295,11 @@ def test_card_action_kinds_per_state(state, kinds, window) -> None:
     window.table.selectRow(0)
     pump()
     assert window.card_actions.visible_kinds() == kinds
-    # they agree with the toolbar's enabled state
+    # they agree with the toolbar's enabled state ("launch" opens the file and is card-only)
     enabled = [k for k, a in (("pause", window.pause_action), ("resume", window.resume_action),
                               ("retry", window.retry_action), ("cancel", window.cancel_action),
                               ("open", window.open_action)) if a.isEnabled()]
-    assert window.card_actions.visible_kinds() == enabled
+    assert [k for k in window.card_actions.visible_kinds() if k != "launch"] == enabled
 
 
 def test_card_buttons_have_accessible_names_with_the_title(window) -> None:
