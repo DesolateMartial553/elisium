@@ -108,11 +108,19 @@ def test_stylesheet_colour_pairs_meet_contrast(palette) -> None:
 
 
 @pytest.mark.parametrize("palette", [theme.NIGHT, theme.DAY])
-@pytest.mark.parametrize("state", sorted(widgets._CHIP_KEY))
-def test_state_chips_are_readable(palette, state) -> None:
+@pytest.mark.parametrize("selected", [False, True])
+@pytest.mark.parametrize("state", sorted(STATE_WORD))
+def test_every_state_text_passes_4_5_on_its_row_fill(palette, selected, state) -> None:
+    """Leftover (c): each state's text colour, on a row (surface) or a selected row (raised)."""
     cc = _contrast_module()
-    bg, fg = widgets.chip_colours(state, palette)
-    assert cc.ratio(fg.name(), bg.name()) >= 4.5
+    fill = palette.hex("raised" if selected else "surface")
+    for missing in (False, True):
+        shown = widgets.state_text_colour(palette, widgets.history_tone(state, missing), selected)
+        assert cc.ratio(shown.name(), fill) >= 4.5, (state, missing, shown.name(), fill)
+    tone = describe_row({"state": state, "url": "https://youtu.be/x", "progress": {"percent": 5.0},
+                         "error": {"message": "m", "fix": "f"}}).tone
+    shown = widgets.state_text_colour(palette, tone, selected)
+    assert cc.ratio(shown.name(), fill) >= 4.5, (state, tone, shown.name(), fill)
 
 
 @pytest.mark.parametrize("palette", [theme.NIGHT, theme.DAY])

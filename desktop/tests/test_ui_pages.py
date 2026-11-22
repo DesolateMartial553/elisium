@@ -113,9 +113,9 @@ def test_history_search_is_debounced(hist) -> None:
 
 def test_history_state_words_and_file_missing(hist) -> None:
     by_title = dict(zip(texts(hist, 0), texts(hist, 2)))
-    assert "Done" in by_title["Alpha clip"]
-    assert by_title["Beta clip"] == hp.FILE_MISSING_TEXT and "File missing" in by_title["Beta clip"]
-    assert "Failed" in by_title["Gamma"]
+    assert by_title["Alpha clip"] == "Done"
+    assert by_title["Beta clip"] == hp.FILE_MISSING_TEXT == "File missing"
+    assert by_title["Gamma"] == "Failed"
 
 
 def test_history_buttons_follow_selection(hist) -> None:

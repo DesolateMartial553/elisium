@@ -18,13 +18,13 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QVBoxLayout,
     QWidget,
 )
 
 from elisium_downloader.engine import browsers
 
 from .quality_dialog import dialog_scale
+from .widgets import dialog_card, make_primary, make_quiet
 
 __all__ = ["BROWSER_LABELS", "Detector", "SignInDialog", "browser_label"]
 
@@ -97,7 +97,7 @@ class SignInDialog(QDialog):
             self._detector.start()
 
     def _build(self) -> None:
-        root = QVBoxLayout(self)
+        root = dialog_card(self)
         root.setSpacing(12)
         self.intro = QLabel(
             "Sign in to Instagram in your browser, then come back and retry."
@@ -121,7 +121,7 @@ class SignInDialog(QDialog):
         row = QHBoxLayout()
         row.setSpacing(12)
         self.use_button = QPushButton("Use this browser and retry")
-        self.use_button.setProperty("primary", True)
+        make_primary(self.use_button)
         self.use_button.setAccessibleName("Use this browser and retry")
         self.use_button.setAccessibleDescription(
             "Use the chosen browser for sign-in, then retry the downloads that needed it."
@@ -132,6 +132,7 @@ class SignInDialog(QDialog):
         self.retry_button.setAccessibleDescription(
             "Retry the downloads that failed because they needed a sign-in."
         )
+        make_primary(self.retry_button)
         self.retry_button.hide()
         self.settings_button = QPushButton("Open Settings > Accounts")
         self.settings_button.setAccessibleName("Open Settings, Accounts")
@@ -140,6 +141,8 @@ class SignInDialog(QDialog):
         )
         self.close_button = QPushButton("Close")
         self.close_button.setAccessibleName("Close")
+        make_quiet(self.close_button)
+        make_quiet(self.settings_button)
         row.addStretch(1)
         for button in (self.use_button, self.retry_button, self.settings_button, self.close_button):
             row.addWidget(button)

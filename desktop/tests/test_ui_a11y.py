@@ -76,7 +76,7 @@ def test_tab_order_through_the_main_window(win) -> None:
         QTest.keyClick(QApplication.focusWidget(), Qt.Key.Key_Tab)
         seen.append(focus_name())
     assert seen[:11] == [
-        "Sections", "Video link", "Paste", "Add", "Options", "All: 1", "Downloads",
+        "Sections", "Video link", "Paste", "Download", "Options", "All: 1", "Downloads",
         "Pause https://a.com/1", "Cancel https://a.com/1",  # the selected row's own buttons
         "Pause", "Cancel",  # then the unchanged toolbar
     ]
@@ -281,14 +281,16 @@ def test_every_status_has_a_word_in_table_history_and_speech(state) -> None:
     model.load([make_snapshot(1, state, title="T")])
     shown = model.index(0, 1).data()
     assert re.search(r"[A-Za-z]{4,}", shown), shown
-    assert " " in shown and not shown.split(" ", 1)[0].isalpha()  # an icon, then the word
+    assert shown.isalpha()  # a plain word: Night shelf has no icon or emoji in a status
     assert re.search(r"[A-Za-z]{4,}", HistoryModel.state_text({"state": state}))
+    assert HistoryModel.state_text({"state": state}).isalpha()
     assert state.replace("probing", "checking") in DownloadModel.spoken(
         make_snapshot(1, state, title="T")).lower()
 
 
 def test_history_missing_file_has_a_word() -> None:
     assert re.search(r"[A-Za-z]{4,}", FILE_MISSING_TEXT)
+    assert FILE_MISSING_TEXT == "File missing"  # words only, no warning sign
 
 
 def test_unavailable_playlist_entries_say_so(dialogs) -> None:

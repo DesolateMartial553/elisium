@@ -1,4 +1,10 @@
-"""The Settings page: saved immediately and applied to the queue live."""
+"""The Settings page: grouped lists on ``surface``, one setting per row, saved immediately.
+
+Night shelf: each group is a ``surface`` card (radius 16) with a 13/600 ``muted`` heading;
+each row has its label (14/600) and helper text (13 ``faint``) on the left and its control on
+the right. A row whose control no longer fits beside its text stacks the control underneath
+(so 200% text never clips).
+"""
 
 from __future__ import annotations
 
@@ -14,8 +20,8 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
-    QFormLayout,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -69,10 +75,13 @@ class _PageScroll(QScrollArea):
 
     def __init__(self) -> None:
         super().__init__()
+        self.on_width: Callable[[int], None] | None = None  # re-arrange rows for this width
         self.viewport().installEventFilter(self)
 
     def _fit(self) -> None:
         page = self.widget()
+        if self.on_width is not None:
+            self.on_width(self.viewport().width())
         if page is not None and page.layout() is not None:
             page.setMinimumHeight(page.layout().totalHeightForWidth(self.viewport().width()))
 
@@ -95,6 +104,97 @@ class _WrapLabel(QLabel):
             need = self.heightForWidth(self.width())
             if need > 0 and self.minimumHeight() != need:
                 self.setMinimumHeight(need)
+
+
+class _ToggleLabel(QLabel):
+    """A row's name that also toggles its switch when clicked (the switch has no text of its own)."""
+
+    def __init__(self, text: str, check: QCheckBox | None = None) -> None:
+        super().__init__(text)
+        self._check = check
+        if check is not None:
+            self.setBuddy(check)
+
+    def mouseReleaseEvent(self, event: object) -> None:  # noqa: N802
+        super().mouseReleaseEvent(event)  # type: ignore[arg-type]
+        if self._check is not None and self._check.isEnabled():
+            self._check.toggle()
+
+
+class _SettingRow(QWidget):
+    """One setting: name and helper text on the left, the control on the right.
+
+    ``name`` may be text or a ready label. ``stack(True)`` puts the control under the text
+    instead of beside it. ``rule`` draws the 1 px ``raised`` line under the row.
+    """
+
+    MIN_TEXT_EM = 20  # the text column never gets narrower than this many "M" widths
+
+    def __init__(self, name: str | QLabel, helper: QLabel | None, controls: list[QWidget],
+                 buddy: QWidget | None = None, rule: bool = True) -> None:
+        super().__init__()
+        self.setObjectName("settingRow")
+        if isinstance(name, QLabel):
+            self.name = name
+        else:
+            self.name = QLabel(name)
+        self.name.setObjectName("settingName")
+        self.name.setWordWrap(True)
+        top = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        self.name.setAlignment(top)
+        if buddy is not None and self.name.buddy() is None:
+            self.name.setBuddy(buddy)
+        self.helper = helper
+        if helper is not None:
+            helper.setObjectName("helper")
+            helper.setWordWrap(True)
+            helper.setAlignment(top)
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(16, 10, 16, 10)
+        self._grid.setHorizontalSpacing(16)
+        self._grid.setVerticalSpacing(8)
+        text = QVBoxLayout()
+        text.setSpacing(2)
+        text.addWidget(self.name)
+        if helper is not None:
+            text.addWidget(helper)
+        self._grid.addLayout(text, 0, 0)
+        self.control = QWidget()
+        box = QHBoxLayout(self.control)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(8)
+        for widget in controls:
+            box.addWidget(widget, 1 if isinstance(widget, QLineEdit) else 0)
+        self._grid.addWidget(self.control, 0, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._grid.setColumnStretch(0, 1)
+        self.stacked = False
+        self._has_controls = bool(controls)
+        self.rule: QFrame | None = None
+        if rule:
+            self.rule = QFrame()
+            self.rule.setObjectName("settingRule")
+            self.rule.setFixedHeight(1)
+            self._grid.addWidget(self.rule, 3, 0, 1, 2)
+        if not controls:
+            self.control.hide()
+
+    def wants_stack(self, width: int) -> bool:
+        """True when the control does not fit beside the text at this row *width*."""
+        if not self._has_controls:
+            return False
+        em = self.fontMetrics().horizontalAdvance("M")
+        need = self.MIN_TEXT_EM * em + self._grid.horizontalSpacing() + self.control.sizeHint().width() + 32
+        return width < need
+
+    def stack(self, stacked: bool) -> None:
+        if stacked == self.stacked:
+            return
+        self.stacked = stacked
+        self._grid.removeWidget(self.control)
+        if stacked:
+            self._grid.addWidget(self.control, 1, 0, 1, 2, Qt.AlignmentFlag.AlignLeft)
+        else:
+            self._grid.addWidget(self.control, 0, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
 
 class _VersionSignal(QObject):
@@ -143,38 +243,43 @@ class SettingsPage(QWidget):
         body = QWidget()
         scroll.setWidget(body)
         outer = QVBoxLayout(body)
-        outer.setSpacing(16)
+        outer.setContentsMargins(0, 0, 8, 0)
+        outer.setSpacing(12)
+        self.rows: list[_SettingRow] = []
+        self.groups: dict[str, QFrame] = {}
+        scroll.on_width = self._arrange
 
         title = QLabel("Settings")
         title.setObjectName("pageTitle")
         outer.addWidget(title)
 
-        def card(heading: str) -> QFormLayout:
+        def group(heading: str, rows: list[_SettingRow]) -> None:
             frame = QFrame()
             frame.setProperty("card", True)
+            frame.setObjectName(f"group-{heading}")
             box = QVBoxLayout(frame)
-            box.setContentsMargins(20, 16, 20, 18)
-            box.setSpacing(12)
+            box.setContentsMargins(0, 8, 0, 4)
+            box.setSpacing(0)
             label = QLabel(heading)
-            label.setObjectName("cardTitle")
+            label.setObjectName("groupTitle")
+            label.setContentsMargins(16, 6, 16, 2)
             box.addWidget(label)
-            form = QFormLayout()
-            form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
-            form.setVerticalSpacing(12)
-            form.setHorizontalSpacing(24)
-            form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
-            box.addLayout(form)
+            for row in rows:
+                box.addWidget(row)
+            if rows and rows[-1].rule is not None:
+                rows[-1].rule.hide()
+            self.rows.extend(rows)
+            self.groups[heading] = frame
             outer.addWidget(frame)
-            return form
 
-        form = card("Downloads")
+        # -- Downloads -----------------------------------------------------
         self.concurrency_spin = QSpinBox()
         self.concurrency_spin.setRange(1, MAX_CONCURRENCY)
         self._pad_spin(self.concurrency_spin)
         self._describe(self.concurrency_spin, "Parallel downloads",
                        "How many downloads run at the same time, from 1 to 5.")
-        form.addRow(self._label("Parallel downloads", self.concurrency_spin), self.concurrency_spin)
+        parallel = _SettingRow("Parallel downloads", self._helper("How many run at the same time"),
+                               [self.concurrency_spin], self.concurrency_spin)
 
         self.limit_check = QCheckBox("Limit speed")
         self._describe(self.limit_check, "Limit speed",
@@ -192,26 +297,33 @@ class SettingsPage(QWidget):
         self.limit_unit.setCurrentIndex(1)
         self._describe(self.limit_unit, "Speed limit unit",
                        "Kilobytes or megabytes per second.")
-        limit_row = QHBoxLayout()
-        limit_row.setSpacing(12)
-        limit_row.addWidget(self.limit_check)
-        limit_row.addWidget(self.limit_spin)
-        limit_row.addWidget(self.limit_unit)
-        limit_row.addStretch(1)
-        form.addRow(self._label("Speed limit", self.limit_spin), limit_row)
+        speed = _SettingRow("Speed limit", self._helper("Keeps the rest of your connection free"),
+                            [self.limit_check, self.limit_spin, self.limit_unit], self.limit_spin)
 
         self.preset_combo = QComboBox()
         for preset in PRESETS.values():
             self.preset_combo.addItem(preset.label, preset.id)
         self._describe(self.preset_combo, "Default quality",
                        "The quality used for new downloads.")
-        form.addRow(self._label("Default quality", self.preset_combo), self.preset_combo)
+        quality = _SettingRow("Default quality", self._helper("Used for new links"),
+                              [self.preset_combo], self.preset_combo)
+        group("Downloads", [parallel, speed, quality])
 
-        form = card("Accounts")
-        self.detect_row = QWidget()
-        detect_layout = QHBoxLayout(self.detect_row)
-        detect_layout.setContentsMargins(0, 0, 0, 0)
-        detect_layout.setSpacing(12)
+        # -- Photos and music (how the engine saves them; nothing to switch yet) --
+        group("Photos and music", [
+            _SettingRow("Photo posts with a song",
+                        self._helper("The photos and the song are kept; ffmpeg joins them into a "
+                                     "video when it is installed"),
+                        [self._value("Photos, song and video", "Photo posts with a song",
+                                     "Photo posts with a song are saved as the photos, the song "
+                                     "and a video of them together.")]),
+            _SettingRow("Song length", self._helper("Only the part the post plays"),
+                        [self._value("Post's snippet", "Song length",
+                                     "The song is cut to the part the post plays.")],
+                        rule=False),
+        ])
+
+        # -- Accounts ------------------------------------------------------
         self.detect_label = _WrapLabel("")
         self.detect_label.setWordWrap(True)
         self._describe(
@@ -221,11 +333,9 @@ class SettingsPage(QWidget):
         )
         self.detect_button = QPushButton("Use")
         self.detect_button.setProperty("primary", True)
-        detect_layout.addWidget(self.detect_label, 1)
-        detect_layout.addWidget(self.detect_button)
-        form.addRow(self.detect_row)
-        form.setRowVisible(self.detect_row, False)
-        self._accounts_form = form
+        detect = _SettingRow(self.detect_label, None, [self.detect_button])
+        self.detect_row = detect
+        detect.hide()
         self.cookies_combo = QComboBox()
         self.cookies_combo.addItem("Not signed in", None)
         for label, key in _COOKIE_BROWSER_LABELS:
@@ -235,7 +345,16 @@ class SettingsPage(QWidget):
             "The browser Elisium reads cookies from when a site needs a sign-in, "
             "such as Instagram stories. Choose Not signed in to turn this off.",
         )
-        form.addRow(self._label("Browser", self.cookies_combo), self.cookies_combo)
+        self.cookies_help = _WrapLabel(
+            "Needed for Instagram stories and private posts. "
+            "Elisium only reads cookies for the site you download from."
+        )
+        self.cookies_help.setWordWrap(True)
+        self._describe(
+            self.cookies_help, "About signing in",
+            "Why Elisium asks for a browser or a cookies.txt file.",
+        )
+        browser = _SettingRow("Browser", self.cookies_help, [self.cookies_combo], self.cookies_combo)
 
         self.cookies_file_edit = QLineEdit()
         self.cookies_file_edit.setReadOnly(True)
@@ -254,47 +373,39 @@ class SettingsPage(QWidget):
             self.cookies_clear_button, "Clear cookies.txt file",
             "Stop using the cookies.txt file.",
         )
-        file_row = QHBoxLayout()
-        file_row.setSpacing(12)
-        file_row.addWidget(self.cookies_file_edit, 1)
-        file_row.addWidget(self.cookies_choose_button)
-        file_row.addWidget(self.cookies_clear_button)
-        form.addRow(self._label("cookies.txt file", self.cookies_choose_button), file_row)
+        cookies = _SettingRow("cookies.txt file", self._helper("Optional, used instead of the browser"),
+                              [self.cookies_file_edit, self.cookies_choose_button,
+                               self.cookies_clear_button], self.cookies_choose_button)
+        self.cookies_file_edit.setMinimumWidth(self.fontMetrics().horizontalAdvance("M") * 12)
+        group("Accounts", [detect, browser, cookies])
 
-        self.cookies_help = _WrapLabel(
-            "Needed for Instagram stories and private posts. "
-            "Elisium only reads cookies for the site you download from."
-        )
-        self.cookies_help.setWordWrap(True)
-        self._describe(
-            self.cookies_help, "About signing in",
-            "Why Elisium asks for a browser or a cookies.txt file.",
-        )
-        form.addRow("", self.cookies_help)
-
-        form = card("Notifications and tray")
-        self.notify_check = QCheckBox("Notify when a download finishes")
-        self._describe(self.notify_check, "Notify when a download finishes",
-                       "Show a message when a download is done.")
-        form.addRow("", self.notify_check)
-        self.tray_check = QCheckBox("Keep running in the tray when closed")
-        self._describe(self.tray_check, "Keep running in the tray when closed",
-                       "When on, closing the window hides it to the tray and downloads carry on.")
-        form.addRow("", self.tray_check)
-
-        form = card("Appearance")
+        # -- Appearance ----------------------------------------------------
+        self.notify_check = self._switch("Notify when a download finishes",
+                                         "Show a message when a download is done.")
+        notify = _SettingRow(_ToggleLabel("Notify when a download finishes", self.notify_check),
+                             None, [self.notify_check])
+        self.tray_check = self._switch("Keep running in the tray when closed",
+                                       "When on, closing the window hides it to the tray and "
+                                       "downloads carry on.")
+        tray = _SettingRow(_ToggleLabel("Keep running in the tray when closed", self.tray_check),
+                           self._helper("Downloads carry on while the window is hidden"),
+                           [self.tray_check])
         self.appearance_combo = QComboBox()
         for label, key in (("System", "system"), ("Night", "night"), ("Day", "day")):
             self.appearance_combo.addItem(label, key)
         self._describe(self.appearance_combo, "Appearance",
                        "Follow the system light or dark setting, or always use Night or Day.")
-        form.addRow(self._label("Appearance", self.appearance_combo), self.appearance_combo)
-        self.motion_check = QCheckBox("Reduce motion")
-        self._describe(self.motion_check, "Reduce motion",
-                       "Turn off the glow breathing and the busy bar. Nothing else changes.")
-        form.addRow("", self.motion_check)
+        theme_row = _SettingRow("Theme", self._helper("System follows your desktop's light or dark setting"),
+                                [self.appearance_combo], self.appearance_combo)
+        self.motion_check = self._switch("Reduce motion",
+                                         "Turn off the progress easing, the row fade-in and the "
+                                         "busy bar. Nothing else changes.")
+        motion = _SettingRow(_ToggleLabel("Reduce motion", self.motion_check),
+                             self._helper("Changes happen instantly instead of easing"),
+                             [self.motion_check], rule=False)
+        group("Appearance", [notify, tray, theme_row, motion])
 
-        form = card("Folders and about")
+        # -- About ---------------------------------------------------------
         self.folder_label = _WrapLabel(str(self.queue.output_dir))
         self.folder_label.setWordWrap(True)
         self.folder_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -303,35 +414,30 @@ class SettingsPage(QWidget):
         self.open_folder_button = QPushButton("Open")
         self._describe(self.open_folder_button, "Open download folder",
                        "Open the download folder in your file manager.")
-        # The path label sits directly in the form (a wrapped label nested in a
-        # box layout gets too little height at large text sizes).
-        form.addRow(self._label("Download folder", self.open_folder_button), self.folder_label)
-        form.addRow("", self.open_folder_button)
+        folder = _SettingRow("Download folder", self.folder_label, [self.open_folder_button],
+                             self.open_folder_button)
+        self.folder_label.setMinimumWidth(self.fontMetrics().horizontalAdvance("M") * 16)
 
         self.version_label = QLabel("checking...")
+        self.version_label.setObjectName("settingValue")
         self._describe(self.version_label, "yt-dlp version",
                        "The installed version of the yt-dlp program.")
-        form.addRow(self._label("yt-dlp version", self.version_label), self.version_label)
         self.update_hint = _WrapLabel(
             "If Instagram stops working, update yt-dlp (pacman -Syu / pip)"
         )
         self.update_hint.setWordWrap(True)
         self._describe(self.update_hint, "About updating yt-dlp",
                        "What to do when Instagram downloads stop working.")
-        form.addRow("", self.update_hint)
+        version = _SettingRow("yt-dlp version", self.update_hint, [self.version_label],
+                              self.version_label)
 
         self.open_data_button = QPushButton("Open data folder")
         self._describe(self.open_data_button, "Open data folder",
                        "Open the folder that holds the history and archive.")
-        form.addRow("", self.open_data_button)
+        data = _SettingRow("Data folder", self._helper("Holds the history and the archive"),
+                           [self.open_data_button], self.open_data_button, rule=False)
+        group("About", [folder, version, data])
         outer.addStretch(1)
-        # One label column width for every card, so the fields line up.
-        labels = [w for w in body.findChildren(QLabel)
-                  if w.buddy() is not None]
-        if labels:
-            widest = max(w.sizeHint().width() for w in labels)
-            for w in labels:
-                w.setMinimumWidth(widest)
 
         for signal in (
             self.concurrency_spin.valueChanged, self.limit_check.toggled,
@@ -375,10 +481,30 @@ class SettingsPage(QWidget):
         widget.setAccessibleDescription(description)
 
     @staticmethod
-    def _label(text: str, buddy: QWidget) -> QLabel:
+    def _helper(text: str) -> QLabel:
+        return _WrapLabel(text)
+
+    @staticmethod
+    def _value(text: str, name: str, description: str) -> QLabel:
+        """A read-only value shown where a control would be (nothing to change yet)."""
         label = QLabel(text)
-        label.setBuddy(buddy)
+        label.setObjectName("settingValue")
+        label.setAccessibleName(name)
+        label.setAccessibleDescription(description)
         return label
+
+    @staticmethod
+    def _switch(name: str, description: str) -> QCheckBox:
+        """A switch: the row's own label carries the words, so the switch has none."""
+        check = QCheckBox()
+        check.setAccessibleName(name)
+        check.setAccessibleDescription(description)
+        return check
+
+    def _arrange(self, width: int) -> None:
+        """Stack a row's control under its text when it would not fit beside it."""
+        for row in self.rows:
+            row.stack(row.wants_stack(width))
 
     def _fit_to_font(self) -> None:
         """Give the number boxes room for their digits and arrows at any text size."""
@@ -387,8 +513,8 @@ class SettingsPage(QWidget):
             spin.setMinimumWidth(fm.horizontalAdvance(sample) + 120)
             # The style sheet's fixed min-height must not squeeze the number field at big text.
             spin.setMinimumHeight(max(42, spin.lineEdit().minimumSizeHint().height() + 8))
-        # A path label this wide makes the form wrap it under its caption when short of room.
         self.folder_label.setMinimumWidth(fm.horizontalAdvance("M") * 16)
+        self._arrange(self._scroll.viewport().width())
 
     def changeEvent(self, event: QEvent) -> None:  # noqa: N802
         super().changeEvent(event)
@@ -497,7 +623,7 @@ class SettingsPage(QWidget):
                 self.detect_button, f"Use {name}",
                 f"Use the cookies of {name} when a site needs a sign-in.",
             )
-        self._accounts_form.setRowVisible(self.detect_row, show)
+        self.detect_row.setVisible(show)
 
     def use_detected_browser(self) -> None:
         """Select the detected browser (same path as choosing it in the dropdown)."""

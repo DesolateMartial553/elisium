@@ -1,12 +1,12 @@
 # Accessibility - Elisium (desktop)
 
 ## What is covered
-- Every control has an accessible name (and a description where useful); status is always an icon plus a word.
-- Keyboard: Tab order Link box, Paste, Add, Options, Sections list, Downloads table, toolbar. Tab leaves tables (it does not walk cells). Shortcuts: see F1 (the cheat sheet and the registered shortcuts come from one table, `SHORTCUTS` in `ui/main_window.py`).
+- Every control has an accessible name (and a description where useful); status is always a plain word (no icons or emoji).
+- Keyboard: Tab order Link box, Paste, Download, Options, Sections list, Downloads table, toolbar. Tab leaves tables (it does not walk cells). Shortcuts: see F1 (the cheat sheet and the registered shortcuts come from one table, `SHORTCUTS` in `ui/main_window.py`).
 - Progress announcements: one zero-height live label on the main window. A `QAccessibleAnnouncementEvent` (polite) is sent at 25, 50 and 75 percent, then "finished" or "failed" (with the plain-language reason), per download. Ticks in between are silent (max 4 per item).
 - Not colour alone: tables, history, notifications and the playlist dialog ("Unavailable") use words.
 - Contrast: an `AccessibleStyle` wrapper around the style you configured (qt6ct, Kvantum, Fusion...) outlines check boxes and radio buttons and draws a 2 px focus ring in the palette's own text colour. No colours are hard-coded, so it follows your theme.
-- 200% text: sidebar, table columns, history columns and dialogs size from the font; no clipped labels, no sideways scrolling on the table pages.
+- 200% text: section links, rows, settings rows and dialogs size from the font; no clipped labels, no sideways scrolling on the table pages.
 - Reduced motion: `ELISIUM_REDUCE_MOTION=1` (or `=0` to force off) removes the busy bar in the Choose quality and playlist dialogs; the text "Checking the link..." stays. PySide6 6.12 has no reduced-motion style hint, so the environment variable is the only switch.
 - Tray and notifications: a StatusNotifier tray icon (shown by waybar's tray module on Hyprland) with Show/Hide, Pause all, Resume all, Open download folder, Quit; do not rely on a left click, the menu always works. Notifications go through `QSystemTrayIcon.showMessage` (freedesktop notifications, e.g. dunst). If no tray exists the window simply closes as with "Keep running in the tray" off. On Wayland the app cannot reliably raise or focus its own window: Show only calls show/raise/activate.
 
@@ -21,7 +21,7 @@
 
 ## Manual Orca checklist (Hyprland / Wayland session)
 Start Orca (`orca &`, or Super+Alt+S if bound), then start `elisium`.
-1. Focus lands in the link box; Orca says "Video link". Tab through Paste, Add, Options, Sections, Downloads: each is named.
+1. Focus lands in the link box; Orca says "Video link". Tab through Paste, Download, Options, Sections, Downloads: each is named.
 2. Press Ctrl+L from the table: back in the link box.
 3. Paste a link and press Enter: the row appears and the status bar says "Added 1 link".
 4. In Downloads, arrow to a row: Orca reads title, status, percent, speed and time left.

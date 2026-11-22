@@ -73,7 +73,7 @@ Night and Day themes, following your system setting (or choose in Settings).
 | --- | --- |
 | ![Settings page](docs/screenshots/settings-night.png) | ![Playlist picker](docs/screenshots/playlist-night.png) |
 
-Pick Night, Day or System in Settings, and turn on Reduce motion to stop the glow animation.
+Pick Night, Day or System in Settings, and turn on Reduce motion to stop the animations.
 
 ---
 
@@ -84,4 +84,4 @@ Pick Night, Day or System in Settings, and turn on Reduce motion to stop the glo
 
 The design rules shared by both apps live in [`core-spec/SPEC.md`](core-spec/SPEC.md). The `briefs/` folder holds the step-by-step build notes.
 
-Elisium is free software under the [GNU GPL v3](LICENSE) or later. It bundles the Inter typeface (SIL Open Font License, see `android/OFL-Inter.txt`) and uses yt-dlp (Unlicense), FFmpeg (LGPL/GPL builds) and, on Android, [youtubedl-android](https://github.com/yausername/youtubedl-android) (GPL-3.0).
+Elisium is free software under the [GNU GPL v3](LICENSE) or later. On the desktop it bundles the Hanken Grotesk typeface (SIL Open Font License, see `desktop/elisium_downloader/ui/fonts/OFL-HankenGrotesk.txt`); the Android app still bundles Inter (see `android/OFL-Inter.txt`). It uses yt-dlp (Unlicense), FFmpeg (LGPL/GPL builds) and, on Android, [youtubedl-android](https://github.com/yausername/youtubedl-android) (GPL-3.0).

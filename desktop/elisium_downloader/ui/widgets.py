@@ -36,12 +36,15 @@ from PySide6.QtGui import (
     QPixmap,
 )
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QButtonGroup,
+    QFrame,
     QHBoxLayout,
     QRadioButton,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -60,10 +63,15 @@ __all__ = [
     "QueueDelegate",
     "RowGeometry",
     "RowHeightKeeper",
+    "HistoryGeometry",
     "action_icon",
     "app_icon",
-    "chip_colours",
+    "dialog_card",
+    "make_primary",
+    "make_quiet",
     "contrast_ratio",
+    "history_tone",
+    "state_text_colour",
     "legible_colour",
     "draw_mark",
     "enter_animation",
@@ -72,12 +80,14 @@ __all__ = [
 ]
 
 _RUNNING = ("downloading", "merging", "converting")
-# History chips: the state word is always written; this only picks its text colour.
-_CHIP_KEY = {
+# History: the state is always written as a word; this only picks the word's colour token.
+_HISTORY_TONE = {
     "queued": "faint", "probing": "faint", "downloading": "text", "merging": "text",
-    "converting": "text", "paused": "warning", "done": "positive", "failed": "negative",
+    "converting": "text", "paused": "muted", "done": "positive", "failed": "negative",
     "skipped": "faint", "cancelled": "faint",
 }
+# The fills a state text can sit on: a row (``surface``) or a selected row (``raised``).
+ROW_FILLS = ("surface", "raised")
 
 
 def _luminance(c: QColor) -> float:
@@ -95,16 +105,21 @@ def contrast_ratio(a: QColor, b: QColor) -> float:
 def legible_colour(p: theme.Palette, key: str, ground: str) -> QColor:
     """Token *key* for text on token *ground*; plain ``text`` when the pair is under 4.5:1.
 
-    Only one pair needs the fallback (``positive`` on the day ``raised`` of a selected row).
+    Only one pair needs the fallback: ``positive`` on the day ``raised`` of a selected row
+    (4.40:1). The state is written as a word, so colour never carries it alone.
     """
     colour = p.color(key)
     return colour if contrast_ratio(colour, p.color(ground)) >= 4.5 else p.color("text")
 
 
-def chip_colours(state: str, p: theme.Palette | None = None) -> tuple[QColor, QColor]:
-    """``(background, text)`` of a History state chip: coloured words on a ``ground`` pill."""
-    p = p or theme.current()
-    return p.color("ground"), p.color(_CHIP_KEY.get(state, "faint"))
+def history_tone(state: str, missing: bool = False) -> str:
+    """Token of the History state word: ``positive``, ``negative``, ``warning`` for a missing file."""
+    return "warning" if missing else _HISTORY_TONE.get(state, "faint")
+
+
+def state_text_colour(p: theme.Palette, key: str, selected: bool) -> QColor:
+    """Colour of a state text on a row: ``surface`` normally, ``raised`` when selected."""
+    return legible_colour(p, key, ROW_FILLS[1] if selected else ROW_FILLS[0])
 
 
 def _motion_off() -> bool:
@@ -579,17 +594,6 @@ class _CardDelegate(QStyledItemDelegate):
         return QRectF(rect).adjusted(self.H_MARGIN * u, self.V_MARGIN * u,
                                      -self.H_MARGIN * u, -self.V_MARGIN * u)
 
-    @staticmethod
-    def fonts(base: QFont) -> tuple[QFont, QFont, QFont]:
-        def f(factor: float, weight: QFont.Weight) -> QFont:
-            font = QFont(base)
-            font.setWeight(weight)
-            if base.pointSizeF() > 0:
-                font.setPointSizeF(max(1.0, base.pointSizeF() * factor))
-            return font
-        return (f(1.0, QFont.Weight.DemiBold), f(0.92, QFont.Weight.Normal),
-                f(0.92, QFont.Weight.DemiBold))
-
     def paint_card(self, painter: QPainter, card: QRectF, option: QStyleOptionViewItem,
                    u: float) -> None:
         p = theme.current()
@@ -607,25 +611,6 @@ class _CardDelegate(QStyledItemDelegate):
             painter.setPen(QPen(p.color("focus"), 2.0))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRoundedRect(card.adjusted(-2, -2, 2, 2), radius + 2, radius + 2)
-
-    def paint_chip(self, painter: QPainter, text: str, state: str, right: float, top: float,
-                   height: float, font: QFont) -> float:
-        """Draw a state chip ending at *right*; return its left edge."""
-        fm = QFontMetrics(font)
-        pad = height * 0.5
-        width = fm.horizontalAdvance(text) + pad * 2
-        rect = QRectF(right - width, top, width, height)
-        bg, fg = chip_colours(state)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(bg)
-        painter.drawRoundedRect(rect, height / 2, height / 2)
-        painter.setPen(fg)
-        painter.setFont(font)
-        painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), text)
-        return rect.left()
-
-    def chip_height(self, fm: QFontMetrics) -> float:
-        return fm.height() + 6
 
 
 class QueueDelegate(_CardDelegate):
@@ -675,6 +660,7 @@ class QueueDelegate(_CardDelegate):
             "title": _px(base, 15, semi), "meta": _px(base, 13), "figure": _px(base, 24, semi),
             "word": _px(base, 15, semi), "sub": _px(base, 12), "pill": _px(base, 13, semi),
             "link": _px(base, 12, semi), "bold": _px(base, 15, bold),
+            "heading": _px(base, 13, semi), "state": _px(base, 14, semi),
         }
 
     def geometry(self, rect: Any, row: dict[str, Any], base: QFont, text: RowText | None = None,
@@ -841,69 +827,210 @@ class QueueDelegate(_CardDelegate):
         painter.restore()
 
 
-class HistoryDelegate(_CardDelegate):
-    """A history entry as a card: title, state chip, then site - date - file.
+@dataclass
+class HistoryGeometry:
+    """Where every part of one History row goes (logical pixels, already scaled)."""
 
-    Restyled to the Night shelf look only; its layout belongs to brief 11C-2.
+    card: QRectF
+    heading: QRectF | None
+    thumb: QRectF
+    title: QRectF
+    meta: QRectF
+    state: QRectF
+    when: QRectF
+    links: list[tuple[str, QRectF]]   # ("open" | "folder" | "again", hit rectangle), left to right
+    dots: list[QRectF]                # the "·" between neighbouring links
+
+
+class HistoryDelegate(_CardDelegate):
+    """A History entry with the same anatomy as a download row, minus the bar.
+
+    Thumbnail placeholder, title 15/600, meta 13 ``faint``; on the right the state as a
+    coloured WORD with the time, and quiet text links (Open, Show in folder, Download
+    again). The first row of each day carries its heading (Today, Yesterday, a date) above
+    the card, so that row is taller by ``heading_height``.
     """
 
-    V_MARGIN = 4
-    H_MARGIN = 4
+    GAP_PX = 8
+    V_MARGIN = 0
+    LINK_LABELS = {"open": "Open", "folder": "Show in folder", "again": "Download again"}
 
+    def __init__(self, parent: Any = None) -> None:
+        super().__init__(parent)
+        self._placeholders: dict[tuple, QPixmap] = {}
+        self.hover: tuple[int, str] | None = None  # (history id, link kind) under the mouse
+
+    # -- sizes ------------------------------------------------------------
     def metrics(self, base: QFont) -> dict[str, float]:
-        title_f, cap_f, _c = self.fonts(base)
-        tfm, cfm = QFontMetrics(title_f), QFontMetrics(cap_f)
         u = _u(base)
-        pad = 14 * u
-        gap = 6 * u
-        inner = max(tfm.height(), self.chip_height(cfm)) + gap + cfm.height()
-        return {"u": u, "pad": pad, "gap": gap, "height": inner + 2 * pad + 2 * self.V_MARGIN * u}
+        return {"u": u, "pad": 16 * u, "gap": self.GAP_PX * u,
+                "height": (theme.SIZE["rowHeight"] + self.GAP_PX) * u}
 
     def row_height(self, base: QFont) -> int:
         return int(math.ceil(self.metrics(base)["height"]))
 
-    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:  # noqa: N802
-        return QSize(200, self.row_height(option.font))
+    def heading_height(self, base: QFont) -> int:
+        """Room above the first row of a day for its heading (13/600)."""
+        u = _u(base)
+        fm = QFontMetrics(QueueDelegate.row_fonts(base)["heading"])
+        return int(math.ceil(14 * u + fm.height() + 4 * u))
 
+    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:  # noqa: N802
+        model = index.model()
+        heading = bool(hasattr(model, "heading_at") and model.heading_at(index.row()))
+        extra = self.heading_height(option.font) if heading else 0
+        return QSize(200, self.row_height(option.font) + extra)
+
+    def card_rect(self, rect: Any, u: float) -> QRectF:
+        return QRectF(rect).adjusted(0, 0, 0, -self.GAP_PX * u)
+
+    @staticmethod
+    def link_kinds(row: dict[str, Any]) -> list[str]:
+        """The links a row offers: all three for a file that is there, else only "again"."""
+        has_file = bool(row.get("state") == "done" and row.get("file_path")
+                        and not row.get("file_missing"))
+        return ["open", "folder", "again"] if has_file else ["again"]
+
+    def geometry(self, rect: Any, row: dict[str, Any], base: QFont, heading: bool = False) -> HistoryGeometry:
+        u = _u(base)
+        f = QueueDelegate.row_fonts(base)
+        fm = {k: QFontMetrics(v) for k, v in f.items()}
+        outer = QRectF(rect)
+        heading_rect = None
+        if heading:
+            h = self.heading_height(base)
+            heading_rect = QRectF(outer.left() + 4 * u, outer.top() + 12 * u,
+                                  outer.width() - 8 * u, fm["heading"].height())
+            outer = outer.adjusted(0, h, 0, 0)
+        card = self.card_rect(outer, u)
+        thumb_w, thumb_h = theme.SIZE["thumbDesktop"]
+        thumb = QRectF(card.left() + 9 * u, card.top() + (card.height() - thumb_h * u) / 2,
+                       thumb_w * u, thumb_h * u)
+        right_edge = card.right() - 16 * u
+        # Right column: the links on one line under the state word and the time.
+        kinds = self.link_kinds(row)
+        dot_w = fm["link"].horizontalAdvance(" · ")
+        widths = [fm["link"].horizontalAdvance(self.LINK_LABELS[k]) + 4 * u for k in kinds]
+        links_w = sum(widths) + dot_w * (len(kinds) - 1)
+        col_w = min(max(links_w, fm["state"].horizontalAdvance("File missing") + 60 * u),
+                    card.width() * 0.55)
+        left = right_edge - col_w
+        state_h, link_h = fm["state"].height(), fm["link"].height()
+        block = state_h + 4 * u + link_h
+        top = card.top() + (card.height() - block) / 2
+        links: list[tuple[str, QRectF]] = []
+        dots: list[QRectF] = []
+        x = right_edge
+        for kind, width in reversed(list(zip(kinds, widths, strict=True))):
+            links.append((kind, QRectF(x - width, top + state_h + 4 * u, width, link_h)))
+            x -= width
+            if kind != kinds[0]:
+                dots.append(QRectF(x - dot_w, top + state_h + 4 * u, dot_w, link_h))
+                x -= dot_w
+        links.reverse()
+        when_w = fm["sub"].horizontalAdvance("00:00") + 2 * u
+        when = QRectF(right_edge - when_w, top, when_w, state_h)
+        state = QRectF(left, top, when.left() - left - 8 * u, state_h)
+        text_x = thumb.right() + 16 * u
+        text_right = max(text_x + 40 * u, left - 16 * u)
+        th, mh = fm["title"].height(), fm["meta"].height()
+        y = card.top() + (card.height() - (th + 2 * u + mh)) / 2
+        title = QRectF(text_x, y, text_right - text_x, th)
+        meta = QRectF(text_x, y + th + 2 * u, text_right - text_x, mh)
+        return HistoryGeometry(card, heading_rect, thumb, title, meta, state, when, links, dots)
+
+    def link_at(self, rect: Any, row: dict[str, Any], base: QFont, heading: bool, pos: Any) -> str | None:
+        """The link under *pos* (a QPointF/QPoint inside the item *rect*), or ``None``."""
+        point = QPointF(pos)
+        for kind, hit in self.geometry(rect, row, base, heading).links:
+            if hit.contains(point):
+                return kind
+        return None
+
+    def thumbnail_for(self, row: dict[str, Any], rect: QRectF, ratio: float, base: QFont) -> QPixmap:
+        site = site_name(row.get("url"))
+        key = (site, round(rect.width()), round(rect.height()), ratio, theme.current().name,
+               QFontInfo(base).family())
+        if key not in self._placeholders:
+            if len(self._placeholders) > 64:
+                self._placeholders.clear()
+            self._placeholders[key] = row_placeholder(site, round(rect.width()), round(rect.height()),
+                                                      ratio, base)
+        return self._placeholders[key]
+
+    # -- painting ---------------------------------------------------------
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
         model = index.model()
         row = model.row_at(index.row()) if hasattr(model, "row_at") else None
         if row is None:
             return
-        from .history_page import HistoryModel, _date, _site  # local: avoids an import cycle
+        from .history_page import HistoryModel  # local: avoids an import cycle
 
         p = theme.current()
-        m = self.metrics(option.font)
-        u, pad, gap = m["u"], m["pad"], m["gap"]
-        title_f, cap_f, chip_f = self.fonts(option.font)
-        tfm, cfm = QFontMetrics(title_f), QFontMetrics(cap_f)
-        card = self.card_rect(option.rect, u)
+        heading = model.heading_at(index.row()) if hasattr(model, "heading_at") else None
+        geo = self.geometry(option.rect, row, option.font, bool(heading))
+        f = QueueDelegate.row_fonts(option.font)
+        fm = {k: QFontMetrics(v) for k, v in f.items()}
+        u = _u(option.font)
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        left = int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        right = int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
         painter.save()
-        self.paint_card(painter, card, option, u)
-        inner = card.adjusted(pad, pad, -pad, -pad)
-        missing = bool(row.get("file_missing"))
-        state = "paused" if missing else row["state"]  # "File missing" reads as a warning
-        chip_h = self.chip_height(QFontMetrics(chip_f))
-        line_h = max(tfm.height(), chip_h)
-        left = self.paint_chip(painter, HistoryModel.state_text(row), state, inner.right(),
-                               inner.top() + (line_h - chip_h) / 2, chip_h, chip_f)
-        title_w = max(40.0, left - inner.left() - gap)
-        painter.setFont(title_f)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        if heading and geo.heading is not None:
+            painter.setFont(f["heading"])
+            painter.setPen(p.color("muted"))
+            painter.drawText(geo.heading, left, heading)
+        self.paint_card(painter, geo.card, option, u)
+        ratio = painter.device().devicePixelRatioF() if painter.device() is not None else 1.0
+        painter.drawPixmap(geo.thumb.topLeft(), self.thumbnail_for(row, geo.thumb, ratio, option.font))
+
+        painter.setFont(f["title"])
         painter.setPen(p.color("text"))
-        painter.drawText(QRectF(inner.left(), inner.top(), title_w, line_h),
-                         int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
-                         tfm.elidedText(row.get("title") or row["url"],
-                                        Qt.TextElideMode.ElideRight, int(title_w)))
-        file_name = (row.get("file_path") or "").rsplit("/", 1)[-1]
-        bits = [_site(row["url"]), _date(row)] + ([file_name] if file_name else [])
-        painter.setFont(cap_f)
-        painter.setPen(p.color("muted"))
-        painter.drawText(
-            QRectF(inner.left(), inner.top() + line_h + gap, inner.width(), cfm.height()),
-            int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
-            cfm.elidedText("  ·  ".join(b for b in bits if b), Qt.TextElideMode.ElideRight,
-                           int(inner.width())),
-        )
+        painter.drawText(geo.title, left, fm["title"].elidedText(
+            row.get("title") or row["url"], Qt.TextElideMode.ElideRight, int(geo.title.width())))
+
+        # Meta: "Site · size" in faint; a failed row adds its plain reason in negative.
+        painter.setFont(f["meta"])
+        site = row.get("site") or site_name(row["url"])
+        bits = [site] + ([row["size_text"]] if row.get("size_text") else [])
+        meta = " · ".join(bits)
+        painter.setPen(state_text_colour(p, "faint", selected))
+        painter.drawText(geo.meta, left, fm["meta"].elidedText(
+            meta, Qt.TextElideMode.ElideRight, int(geo.meta.width())))
+        reason = (row.get("error_message") or "") if row.get("state") == "failed" else ""
+        if reason:
+            used = fm["meta"].horizontalAdvance(meta + " · ")
+            if used < geo.meta.width() - 20 * u:
+                rest = QRectF(geo.meta.left() + used, geo.meta.top(), geo.meta.width() - used,
+                              geo.meta.height())
+                painter.setPen(state_text_colour(p, "negative", selected))
+                painter.drawText(rest, left, fm["meta"].elidedText(
+                    reason, Qt.TextElideMode.ElideRight, int(rest.width())))
+                painter.setPen(state_text_colour(p, "faint", selected))
+                painter.drawText(QRectF(geo.meta.left() + used - fm["meta"].horizontalAdvance("· "),
+                                        geo.meta.top(), fm["meta"].horizontalAdvance("· "),
+                                        geo.meta.height()), left, "·")
+
+        # Right column: the state word in colour, the time in faint, then the links.
+        missing = bool(row.get("file_missing"))
+        painter.setFont(f["state"])
+        painter.setPen(state_text_colour(p, history_tone(row["state"], missing), selected))
+        painter.drawText(geo.state, right, fm["state"].elidedText(
+            HistoryModel.state_text(row), Qt.TextElideMode.ElideLeft, int(geo.state.width())))
+        painter.setFont(f["sub"])
+        painter.setPen(state_text_colour(p, "faint", selected))
+        painter.drawText(geo.when, right, row.get("when_text") or "")
+        painter.setFont(f["link"])
+        hovered = self.hover[1] if self.hover and self.hover[0] == row["id"] else None
+        for kind, hit in geo.links:
+            lit = kind == "open" or kind == hovered
+            painter.setPen(p.color("text") if lit else state_text_colour(p, "muted", selected))
+            painter.drawText(hit, int(Qt.AlignmentFlag.AlignCenter), self.LINK_LABELS[kind])
+        painter.setPen(state_text_colour(p, "muted", selected))
+        for dot in geo.dots:
+            painter.drawText(dot, int(Qt.AlignmentFlag.AlignCenter), "·")
         painter.restore()
 
 
@@ -926,6 +1053,36 @@ class RowHeightKeeper(QObject):
                             QEvent.Type.Polish, QEvent.Type.Show):
             self.update()
         return False
+
+
+# -- dialogs --------------------------------------------------------------------------------
+def dialog_card(dialog: QWidget, margins: tuple[int, int, int, int] = (24, 22, 24, 20)) -> QVBoxLayout:
+    """Lay *dialog* out as a ``surface`` card (radius 16) on the ``ground`` window; return its layout.
+
+    A dialog is the one thing that floats, so it is the one thing lifted off the page: by
+    lightness, with no gradient or glow (the window manager draws any shadow).
+    """
+    outer = QVBoxLayout(dialog)
+    outer.setContentsMargins(12, 12, 12, 12)
+    frame = QFrame(dialog)
+    frame.setObjectName("dialogCard")
+    frame.setProperty("card", True)
+    outer.addWidget(frame)
+    inner = QVBoxLayout(frame)
+    inner.setContentsMargins(*margins)
+    return inner
+
+
+def make_primary(button: QAbstractButton) -> None:
+    """The dialog's one inverted pill (white on black at night, black on white by day)."""
+    button.setProperty("primary", True)
+    button.setProperty("quiet", False)
+
+
+def make_quiet(button: QAbstractButton) -> None:
+    """A secondary action: plain text, no fill."""
+    button.setProperty("quiet", True)
+    button.setProperty("primary", False)
 
 
 # -- empty state --------------------------------------------------------------------------

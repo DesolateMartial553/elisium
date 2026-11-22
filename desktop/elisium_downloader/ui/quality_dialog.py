@@ -33,6 +33,7 @@ from elisium_downloader.engine.queue import DownloadQueue
 from . import theme
 from .probe_worker import ProbeWorker
 from .thumbnail import ThumbnailLoader, placeholder_pixmap
+from .widgets import dialog_card, make_primary, make_quiet
 
 __all__ = ["QualityDialog", "describe_selection", "dialog_scale", "font_scale", "reduce_motion"]
 
@@ -158,8 +159,7 @@ class QualityDialog(QDialog):
 
     # -- construction ----------------------------------------------------
     def _build(self, presets: list[Preset], default_id: str | None) -> None:
-        root = QVBoxLayout(self)
-        root.setContentsMargins(24, 22, 24, 20)
+        root = dialog_card(self)
         root.setSpacing(12)
 
         top = QHBoxLayout()
@@ -268,16 +268,18 @@ class QualityDialog(QDialog):
         self.retry_button = QPushButton("Retry")
         self.retry_button.setAccessibleName("Retry")
         self.retry_button.setAccessibleDescription("Check the link again.")
+        make_quiet(self.retry_button)
         self.buttons.addButton(self.retry_button, QDialogButtonBox.ButtonRole.ActionRole)
         self.download_button = QPushButton("Download")
         self.download_button.setAccessibleName("Download")
         self.download_button.setAccessibleDescription("Add this video to the download list.")
         self.download_button.setDefault(True)
-        self.download_button.setProperty("primary", True)
+        make_primary(self.download_button)
         self.buttons.addButton(self.download_button, QDialogButtonBox.ButtonRole.AcceptRole)
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.setAccessibleName("Cancel")
         self.cancel_button.setAccessibleDescription("Close without adding anything.")
+        make_quiet(self.cancel_button)
         self.buttons.addButton(self.cancel_button, QDialogButtonBox.ButtonRole.RejectRole)
         root.addWidget(self.buttons)
 

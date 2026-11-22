@@ -37,18 +37,19 @@ COLUMNS = ("Title", "Status", "Progress", "Speed", "ETA", "Size")
 COL_TITLE, COL_STATUS, COL_PROGRESS, COL_SPEED, COL_ETA, COL_SIZE = range(6)
 PERCENT_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 
-# A word plus an icon character: status is never conveyed by colour alone.
+# Status is always a plain word (never an icon or emoji): the status column of the
+# queue table and the History state words.
 STATUS_TEXT = {
-    "queued": "⏳ Queued",
-    "probing": "\U0001f50d Checking",
-    "downloading": "⬇ Downloading",
-    "merging": "⚙ Merging",
-    "converting": "⟳ Converting",
-    "paused": "⏸ Paused",
-    "done": "✔ Done",
-    "failed": "✖ Failed",
-    "skipped": "⏭ Skipped",
-    "cancelled": "⊘ Cancelled",
+    "queued": "Queued",
+    "probing": "Checking",
+    "downloading": "Downloading",
+    "merging": "Merging",
+    "converting": "Converting",
+    "paused": "Paused",
+    "done": "Done",
+    "failed": "Failed",
+    "skipped": "Skipped",
+    "cancelled": "Cancelled",
 }
 # Night shelf row wording: plain words, no icons (the Downloads rows draw these).
 STATE_WORD = {

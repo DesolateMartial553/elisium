@@ -275,10 +275,16 @@ def _make_images(p: Palette) -> dict[str, str]:
     def box(on: bool, focus: bool, disabled: bool):
         def draw(g: QPainter, s: int) -> None:
             inset = 1.0
-            edge = p.color("control") if disabled else p.color("focus" if focus else "faint")
-            fill = p.color("primary") if on and not disabled else p.color("surface")
+            # Flat: a ``control`` square (``primary`` when ticked); only the focus ring is an outline.
+            fill = p.color("raised") if disabled else p.color("primary" if on else "control")
             g.setBrush(fill)
-            g.setPen(QPen(edge, 2 if focus else 1.4))
+            if focus:
+                edge = QPen(p.color("focus"), 2)
+            elif not on and not disabled:
+                edge = QPen(p.color("faint"), 1.2)  # an empty box keeps a thin edge so it reads on any row
+            else:
+                edge = Qt.PenStyle.NoPen
+            g.setPen(edge)
             g.drawRoundedRect(inset, inset, s - 2 * inset, s - 2 * inset, 5, 5)
             if on:
                 path = QPainterPath()
@@ -318,7 +324,11 @@ def _make_images(p: Palette) -> dict[str, str]:
 
 
 def _switch_image(p: Palette, on: bool, focus: bool, disabled: bool) -> str:
-    """A 44 x 26 switch image: filled ``primary`` when on, an outline when off."""
+    """A 44 x 26 switch image: ``primary`` track when on, a ``control`` track when off; flat.
+
+    The knob is ``onPrimary`` on the ``primary`` track and ``muted`` on the ``control`` track
+    (both over 4.5:1); only the focus ring is an outline.
+    """
     key = f"{'on' if on else 'off'}{'-focus' if focus else ''}{'-off' if disabled else ''}"
     folder = _image_dir()
     for scale, suffix in ((1, ""), (2, "@2x")):
@@ -327,16 +337,16 @@ def _switch_image(p: Palette, on: bool, focus: bool, disabled: bool) -> str:
         g = QPainter(image)
         g.setRenderHint(QPainter.RenderHint.Antialiasing)
         g.scale(scale, scale)
-        inset = 2.0 if focus else 1.0
+        inset = 1.0
         w, h = 44.0, 26.0
         if disabled:
-            track, edge, knob = p.color("surface"), p.color("control"), p.color("control")
+            track, knob = p.color("raised"), p.color("control")
         elif on:
-            track, edge, knob = p.color("primary"), p.color("focus" if focus else "primary"), p.color("onPrimary")
+            track, knob = p.color("primary"), p.color("onPrimary")
         else:
-            track, edge, knob = p.color("surface"), p.color("focus" if focus else "faint"), p.color("faint")
+            track, knob = p.color("control"), p.color("muted")
         g.setBrush(track)
-        g.setPen(QPen(edge, 2 if focus else 1.4))
+        g.setPen(QPen(p.color("focus"), 2) if focus else Qt.PenStyle.NoPen)
         radius = (h - 2 * inset) / 2
         g.drawRoundedRect(inset, inset, w - 2 * inset, h - 2 * inset, radius, radius)
         g.setPen(Qt.PenStyle.NoPen)
@@ -363,7 +373,8 @@ def build_stylesheet(p: Palette) -> str:
     row, card, thumb = RADIUS["row"], RADIUS["card"], RADIUS["thumb"]
     return f"""
 QWidget {{ font-family: "{FAMILY}"; }}
-QMainWindow, QDialog, QMessageBox {{ background: {c('ground')}; color: {c('text')}; }}
+QMainWindow, QDialog {{ background: {c('ground')}; color: {c('text')}; }}
+QMessageBox {{ background: {c('surface')}; color: {c('text')}; }}
 QLabel {{ background: transparent; color: {c('text')}; }}
 QLabel#pageTitle {{ font-size: 1.43em; font-weight: 700; }}
 QLabel#cardTitle {{ font-size: 1.07em; font-weight: 600; }}
@@ -372,6 +383,17 @@ QScrollArea {{ background: transparent; border: none; }}
 QScrollArea > QWidget > QWidget {{ background: transparent; }}
 QFrame[card="true"] {{ background: {c('surface')}; border: none; border-radius: {row}px; }}
 QFrame[card="true"] QLabel {{ background: transparent; }}
+QFrame[card="true"] QLineEdit, QFrame[card="true"] QPlainTextEdit, QFrame[card="true"] QAbstractSpinBox,
+QFrame[card="true"] QComboBox {{ background: {c('control')}; color: {c('text')}; placeholder-text-color: {c('muted')}; }}
+QFrame[card="true"] QLineEdit:disabled, QFrame[card="true"] QAbstractSpinBox:disabled,
+QFrame[card="true"] QComboBox:disabled {{ background: {c('raised')}; color: {c('faint')}; }}
+QFrame[card="true"] QAbstractSpinBox QLineEdit {{ background: transparent; }}
+QFrame[card="true"] QTableView, QFrame[card="true"] QListWidget {{ background: {c('ground')}; }}
+QFrame[card="true"] QTableView {{ alternate-background-color: {c('ground')}; }}
+QFrame#settingRule {{ background: {c('raised')}; border: none; }}
+QLabel#groupTitle {{ font-size: 0.93em; font-weight: 600; color: {c('muted')}; }}
+QLabel#settingName {{ font-weight: 600; }}
+QLabel#helper {{ font-size: 0.93em; color: {c('faint')}; }}
 QToolTip {{ background: {c('raised')}; color: {c('text')}; border: none; padding: 6px 8px;
     border-radius: {thumb}px; }}
 
@@ -384,18 +406,18 @@ QPushButton:hover {{ background: {c('control')}; }}
 QPushButton:pressed {{ background: {c('control')}; }}
 QPushButton:disabled {{ background: {c('surface')}; color: {c('faint')}; }}
 QPushButton:focus {{ border: 2px solid {c('focus')}; }}
-QPushButton[primary="true"], QPushButton:default {{ background: {c('primary')}; color: {c('onPrimary')}; }}
-QPushButton[primary="true"]:hover, QPushButton:default:hover {{ background: {c('muted')};
-    color: {c('onPrimary')}; }}
-QPushButton[primary="true"]:pressed, QPushButton:default:pressed {{ background: {c('muted')};
-    color: {c('onPrimary')}; }}
-QPushButton[primary="true"]:disabled, QPushButton:default:disabled {{ background: {c('raised')};
-    color: {c('faint')}; }}
-QPushButton[primary="true"]:focus, QPushButton:default:focus {{ border: 2px solid {c('focus')}; }}
+QPushButton[primary="true"] {{ background: {c('primary')}; color: {c('onPrimary')}; }}
+QPushButton[primary="true"]:hover {{ background: {c('muted')}; color: {c('onPrimary')}; }}
+QPushButton[primary="true"]:pressed {{ background: {c('muted')}; color: {c('onPrimary')}; }}
+QPushButton[primary="true"]:disabled {{ background: {c('raised')}; color: {c('faint')}; }}
+QPushButton[primary="true"]:focus {{ border: 2px solid {c('focus')}; }}
 QPushButton[quiet="true"], QPushButton:flat {{ background: transparent; color: {c('muted')}; padding: 0 8px; }}
 QPushButton[quiet="true"]:hover, QPushButton:flat:hover {{ background: transparent; color: {c('text')}; }}
 QPushButton[quiet="true"]:disabled, QPushButton:flat:disabled {{ background: transparent; color: {c('faint')}; }}
 QPushButton[quiet="true"]:focus, QPushButton:flat:focus {{ border: 2px solid {c('focus')}; }}
+QPushButton[menu="true"] {{ padding-right: 24px; }}
+QPushButton::menu-indicator {{ image: url({imgs['chevron-down']}); width: 14px; height: 14px;
+    subcontrol-origin: padding; subcontrol-position: right center; right: 6px; }}
 QPushButton#downloadButton {{ min-height: 32px; padding: 0 20px; }}
 
 QToolButton {{ background: transparent; color: {c('text')}; border: 2px solid transparent;
@@ -426,8 +448,8 @@ QLineEdit, QPlainTextEdit, QAbstractSpinBox, QComboBox {{ background: {c('raised
     border: 2px solid transparent; border-radius: {thumb}px; padding: 0 12px;
     selection-background-color: {c('primary')}; selection-color: {c('onPrimary')}; }}
 QLineEdit, QAbstractSpinBox, QComboBox {{ min-height: 32px; }}
-QLineEdit#linkField {{ background: {c('surface')}; border-radius: {pill}px; padding: 0 16px;
-    min-height: 32px; }}
+QLineEdit#linkField, QLineEdit#searchField {{ background: {c('surface')}; border-radius: {pill}px;
+    padding: 0 16px; min-height: 32px; }}
 QPlainTextEdit {{ padding: 8px 12px; }}
 QLineEdit:focus, QPlainTextEdit:focus, QAbstractSpinBox:focus, QComboBox:focus {{
     border: 2px solid {c('focus')}; }}
@@ -465,19 +487,19 @@ QListView::indicator:checked:disabled {{ image: url({imgs['box-on-off']}); }}
 
 QListView, QListWidget, QTableView, QTreeView {{ background: {c('surface')}; color: {c('text')};
     border: none; border-radius: {thumb}px; outline: none;
-    selection-background-color: {c('primary')}; selection-color: {c('onPrimary')};
+    selection-background-color: {c('raised')}; selection-color: {c('text')};
     alternate-background-color: {c('raised')}; gridline-color: {c('raised')}; }}
 QTableView:focus, QTreeView:focus, QListWidget#entries:focus {{ border: 2px solid {c('focus')}; }}
 QListView:disabled, QListWidget:disabled, QTableView:disabled {{ color: {c('faint')}; }}
 QListWidget::item {{ padding: 10px 12px; border-radius: {thumb}px; margin: 2px 4px;
     border: 2px solid transparent; }}
-QListWidget::item:selected {{ background: {c('primary')}; color: {c('onPrimary')}; }}
+QListWidget::item:selected {{ background: {c('raised')}; color: {c('text')}; }}
 QListWidget::item:selected:focus {{ border: 2px solid {c('focus')}; }}
 QListWidget::item:hover {{ background: {c('raised')}; }}
-QListWidget::item:selected:hover {{ background: {c('primary')}; color: {c('onPrimary')}; }}
+QListWidget::item:selected:hover {{ background: {c('raised')}; color: {c('text')}; }}
 QListWidget::item:disabled {{ color: {c('faint')}; }}
 QTableView::item {{ padding: 4px 8px; }}
-QTableView::item:selected {{ background: {c('primary')}; color: {c('onPrimary')}; }}
+QTableView::item:selected {{ background: {c('raised')}; color: {c('text')}; }}
 QHeaderView {{ background: transparent; }}
 QHeaderView::section {{ background: {c('raised')}; color: {c('muted')}; border: none;
     padding: 6px 10px; font-weight: 600; }}

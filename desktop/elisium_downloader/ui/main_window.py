@@ -66,6 +66,7 @@ from .quality_dialog import dialog_scale, font_scale
 from .thumbnail import ThumbnailCache
 from .widgets import (
     BrandMark, CountCards, EmptyState, QueueDelegate, RowHeightKeeper, action_icon,
+    dialog_card, make_primary, make_quiet,
     enter_animation, progress_ease,
 )
 
@@ -530,8 +531,7 @@ class MainWindow(QMainWindow):
         self.add_button = QPushButton("Download")
         self.add_button.setObjectName("downloadButton")
         self.add_button.setProperty("primary", True)
-        # The name stays "Add" (brief 11C-1: every accessible name is kept).
-        self.add_button.setAccessibleName("Add")
+        self.add_button.setAccessibleName("Download")
         self.add_button.setAccessibleDescription(
             "Add the link in the box to the download list."
         )
@@ -1291,7 +1291,8 @@ class MainWindow(QMainWindow):
         dialog = QDialog(self)
         dialog.setWindowTitle("Keyboard shortcuts")
         dialog.setAccessibleName("Keyboard shortcuts")
-        layout = QVBoxLayout(dialog)
+        layout = dialog_card(dialog)
+        layout.setSpacing(8)
         dialog.setMinimumWidth(round(480 * dialog_scale(dialog)))
         for keys, meaning, _sequences in SHORTCUTS:
             label = QLabel(f"<b>{keys}</b>  {meaning}")
@@ -1299,6 +1300,7 @@ class MainWindow(QMainWindow):
             layout.addWidget(label)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(dialog.reject)
+        make_primary(buttons.button(QDialogButtonBox.StandardButton.Close))
         layout.addWidget(buttons)
         dialog.adjustSize()  # honours wrapped labels' height-for-width
         # Pin each wrapped label to the height its text needs at the final width, so a
@@ -1317,12 +1319,15 @@ class MainWindow(QMainWindow):
     def _confirm_close(self) -> str:
         """Ask what to do about running downloads: 'pause', 'keep' or 'cancel'."""
         box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Question)
+        box.setIcon(QMessageBox.Icon.NoIcon)
         box.setWindowTitle("Downloads are running")
         box.setText("Downloads are running. Pause them and quit?")
         pause = box.addButton("Pause and quit", QMessageBox.ButtonRole.AcceptRole)
         keep = box.addButton("Keep downloading", QMessageBox.ButtonRole.RejectRole)
         cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        make_primary(keep)  # the safe choice is the inverted pill (it is also the default)
+        make_quiet(pause)
+        make_quiet(cancel)
         box.setDefaultButton(keep)
         box.setEscapeButton(cancel)
         box.exec()

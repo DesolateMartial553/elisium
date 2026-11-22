@@ -61,12 +61,10 @@ def test_rows_title_fallback_and_update(qapp) -> None:
         ("cancelled", "Cancelled"),
     ],
 )
-def test_status_word_and_icon(qapp, state, word) -> None:
+def test_status_is_a_plain_word(qapp, state, word) -> None:
     model = DownloadModel()
     model.load([make_snapshot(1, state)])
-    text = cell(model, 0, 1)
-    assert text.endswith(word)
-    assert len(text) > len(word)  # an icon character precedes the word
+    assert cell(model, 0, 1) == word  # Night shelf: the word alone, no icon or emoji
 
 
 def test_progress_columns_and_sentence(qapp) -> None:

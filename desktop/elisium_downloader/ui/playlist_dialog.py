@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QToolButton,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -32,6 +31,7 @@ from elisium_downloader.engine.queue import DownloadQueue
 
 from .probe_worker import ProbeWorker
 from .quality_dialog import dialog_scale, reduce_motion
+from .widgets import dialog_card, make_primary, make_quiet
 
 __all__ = ["PlaylistDialog"]
 
@@ -78,8 +78,7 @@ class PlaylistDialog(QDialog):
 
     # -- construction ----------------------------------------------------
     def _build(self, presets: list[Preset], default_id: str | None) -> None:
-        root = QVBoxLayout(self)
-        root.setContentsMargins(24, 22, 24, 20)
+        root = dialog_card(self)
         root.setSpacing(12)
         self.title_label = QLabel("Playlist")
         font = self.title_label.font()
@@ -131,6 +130,8 @@ class PlaylistDialog(QDialog):
             "Type video numbers such as 3-15 or 1,4,9-12 to tick exactly those videos."
         )
         range_label.setBuddy(self.range_edit)
+        make_quiet(self.select_all_button)
+        make_quiet(self.select_none_button)
         self.select_all_button.setAutoDefault(False)
         self.select_none_button.setAutoDefault(False)
         tools.setSpacing(8)
@@ -175,16 +176,18 @@ class PlaylistDialog(QDialog):
         self.retry_button = QPushButton("Retry")
         self.retry_button.setAccessibleName("Retry")
         self.retry_button.setAccessibleDescription("Check the link again.")
+        make_quiet(self.retry_button)
         self.buttons.addButton(self.retry_button, QDialogButtonBox.ButtonRole.ActionRole)
         self.add_button = QPushButton("Add selected")
         self.add_button.setAccessibleName("Add selected")
         self.add_button.setAccessibleDescription("Add the ticked videos to the download list.")
         self.add_button.setDefault(True)
-        self.add_button.setProperty("primary", True)
+        make_primary(self.add_button)
         self.buttons.addButton(self.add_button, QDialogButtonBox.ButtonRole.AcceptRole)
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.setAccessibleName("Cancel")
         self.cancel_button.setAccessibleDescription("Close without adding anything.")
+        make_quiet(self.cancel_button)
         self.buttons.addButton(self.cancel_button, QDialogButtonBox.ButtonRole.RejectRole)
         root.addWidget(self.buttons)
 
