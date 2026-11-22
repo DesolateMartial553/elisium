@@ -32,6 +32,9 @@ interface SettingsStore {
     /** Photo-post settings (data layer for the 10E screens); the defaults make a store without them still work. */
     suspend fun setPhotoMode(value: PhotoMode) {}
     suspend fun setSongLength(value: SongLength) {}
+
+    /** "Faster downloads" Auto / Off (data layer for the Downloads settings row). */
+    suspend fun setFasterDownloads(value: FasterDownloads) {}
 }
 
 /**
@@ -94,6 +97,10 @@ class SettingsRepository(context: Context) : SettingsStore {
         store.edit { it[SONG_LENGTH] = value.storedValue }
     }
 
+    override suspend fun setFasterDownloads(value: FasterDownloads) {
+        store.edit { it[FASTER_DOWNLOADS] = value.storedValue }
+    }
+
     private fun Preferences.toSettings() = Settings(
         concurrency = this[CONCURRENCY] ?: Settings().concurrency,
         speedLimit = this[SPEED_LIMIT],
@@ -105,6 +112,7 @@ class SettingsRepository(context: Context) : SettingsStore {
         lastYtDlpCheck = this[LAST_YTDLP_CHECK] ?: 0L,
         photoMode = PhotoMode.fromStored(this[PHOTO_MODE]),
         songLength = SongLength.fromStored(this[SONG_LENGTH]),
+        fasterDownloads = FasterDownloads.fromStored(this[FASTER_DOWNLOADS]),
     ).validated()
 
     private companion object {
@@ -118,5 +126,6 @@ class SettingsRepository(context: Context) : SettingsStore {
         val LAST_YTDLP_CHECK = longPreferencesKey("last_ytdlp_check")
         val PHOTO_MODE = stringPreferencesKey("photo_mode")
         val SONG_LENGTH = stringPreferencesKey("song_length")
+        val FASTER_DOWNLOADS = stringPreferencesKey("faster_downloads")
     }
 }

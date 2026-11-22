@@ -138,9 +138,10 @@ class NightShelfQueueTest {
             }
         }
         assertEquals("Looking up the post...", LOOKING_UP_TITLE)
-        // Not for plain video links, not once the title is known, not once running.
-        assertEquals("https://example.com/v/1", queueItem(state = "queued").toRowModel().title)
-        assertEquals("https://www.instagram.com/reel/CreelCode1/", queueTitle(null, "https://www.instagram.com/reel/CreelCode1/", "queued"))
+        // Plain video links show the host (instant card), not once the title is known, not once running.
+        assertEquals("example.com", queueItem(state = "queued").toRowModel().title)
+        assertEquals("instagram.com", queueTitle(null, "https://www.instagram.com/reel/CreelCode1/", "queued"))
+        assertEquals("https://example.com/v/1", queueItem(state = "failed").toRowModel().title)
         assertEquals("Real title", queueTitle("Real title", "https://www.instagram.com/p/CpostCode1/", "probing"))
         assertEquals("https://www.instagram.com/p/CpostCode1/", queueTitle(null, "https://www.instagram.com/p/CpostCode1/", "downloading"))
     }

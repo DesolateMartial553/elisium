@@ -19,6 +19,20 @@ enum class Appearance(val storedValue: String) {
     }
 }
 
+/**
+ * "Faster downloads": Auto looks each link up once and lets the download reuse that lookup; Off looks it up
+ * again (today's behaviour). Unknown or missing stored text falls back to [Auto].
+ */
+enum class FasterDownloads(val storedValue: String) {
+    Auto("auto"),
+    Off("off"),
+    ;
+
+    companion object {
+        fun fromStored(value: String?): FasterDownloads = entries.firstOrNull { it.storedValue == value } ?: Auto
+    }
+}
+
 /** App settings (port of `ui/settings.py`; wifi-only is Android-only, close-to-tray desktop-only). */
 data class Settings(
     val concurrency: Int = DEFAULT_CONCURRENCY,
@@ -35,6 +49,8 @@ data class Settings(
     val photoMode: PhotoMode = PhotoMode.PhotosSongVideo,
     /** "Song length": the post's snippet (default) or the full track. */
     val songLength: SongLength = SongLength.Snippet,
+    /** Settings > Downloads > Faster downloads (default Auto). */
+    val fasterDownloads: FasterDownloads = FasterDownloads.Auto,
 )
 
 private val LIMIT_RE = Regex("^\\d+(\\.\\d+)?[KMG]?$")

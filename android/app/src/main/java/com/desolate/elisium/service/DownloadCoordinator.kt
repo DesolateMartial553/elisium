@@ -17,6 +17,7 @@ import com.desolate.elisium.media.HttpMediaFetcher
 import com.desolate.elisium.media.MediaEngine
 import com.desolate.elisium.media.UrlConnectionTransport
 import java.io.File
+import com.desolate.elisium.settings.FasterDownloads
 import com.desolate.elisium.settings.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -89,6 +90,7 @@ class DownloadCoordinator(
                 queue.setExtraArgs(preset.extraArgs)
                 queue.setPhotoMode(s.photoMode)
                 queue.setSongLength(s.songLength)
+                queue.setReuseProbe(s.fasterDownloads == FasterDownloads.Auto)
                 synchronized(netLock) {
                     wifiOnly = s.wifiOnly
                     notifyOnDone = s.notifyOnDone

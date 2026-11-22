@@ -146,6 +146,19 @@ class YoutubeDlBackendTest {
 
     // -- start -----------------------------------------------------------
     @Test
+    fun theRunnerGetsNoLinkWhenTheSavedLookupIsLoaded() = runBlocking {
+        val staging = File(tmp.root, "staging")
+        val runner = FakeRunner { _, _ -> RunResult(1, "", "boom") }
+        val info = File(staging, "tmp/item-1.info.json")
+        backend(runner).start(request(staging).copy(infoJson = info)) { }.await()
+        backend(runner).start(request(staging, "item-2")) { }.await()
+        assertEquals("", runner.calls[0].url)
+        assertEquals(info.path, runner.calls[0].args.last())
+        assertEquals("https://youtu.be/dQw4w9WgXcQ", runner.calls[1].url)
+        assertFalse("--load-info-json" in runner.calls[1].args)
+    }
+
+    @Test
     fun startReportsProgressAndTheFilePath() = runBlocking {
         val staging = File(tmp.root, "staging")
         val runner = FakeRunner { call, onLine ->

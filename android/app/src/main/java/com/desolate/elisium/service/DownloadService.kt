@@ -30,6 +30,9 @@ class DownloadService : Service() {
     private val main = Handler(Looper.getMainLooper())
     private var running = false
 
+    /** Wi-Fi and wake locks, held only while a download runs (released on idle, error and destroy). */
+    private lateinit var locks: DownloadLocks
+
     /** Id of the newest start command; [stopSelfResult] with it never drops a start that arrived later. */
     private var lastStartId = 0
 
@@ -37,6 +40,7 @@ class DownloadService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val app = application as ElisiumApp
+        if (!::locks.isInitialized) locks = DownloadLocks(listOf(WifiHeldLock(this), WakeHeldLock(this)))
         lastStartId = startId
         Notifications.ensureChannels(this)
         val coordinator = app.coordinator.value
@@ -47,6 +51,7 @@ class DownloadService : Service() {
         } catch (e: Exception) {
             // ForegroundServiceStartNotAllowedException (Android 12+) or a missing type permission.
             coordinator?.reportServiceFailure("Download service could not start: ${e.message}")
+            locks.releaseAll()
             stopSelfResult(startId)
             return START_NOT_STICKY
         }
@@ -66,6 +71,13 @@ class DownloadService : Service() {
 
     private suspend fun follow(app: ElisiumApp) {
         val coordinator = app.coordinator.filterNotNull().first()
+        val lockWatch = scope.launch {
+            try {
+                coordinator.queue.items.collect { locks.update(shouldHoldLocks(it)) }
+            } finally {
+                locks.releaseAll() // idle, error or cancelled: never keep the radio and CPU awake for nothing
+            }
+        }
         val updates = scope.launch {
             combine(coordinator.queue.items, coordinator.holdReason) { items, hold -> notificationModel(items, hold) }
                 .conflate()
@@ -76,6 +88,8 @@ class DownloadService : Service() {
         }
         coordinator.pending.first { !it }
         updates.cancel()
+        lockWatch.cancel()
+        locks.releaseAll()
         // New work may have arrived since pending turned false: look again on the main thread before stopping.
         main.post {
             if (coordinator.pending.value) {
@@ -93,6 +107,7 @@ class DownloadService : Service() {
      */
     private fun stopNow(onlyIfNoNewerStart: Boolean = false) {
         running = false
+        if (::locks.isInitialized && !onlyIfNoNewerStart) locks.releaseAll()
         if (onlyIfNoNewerStart) {
             // false = a newer start is queued and will call startForeground itself.
             if (stopSelfResult(lastStartId)) stopForeground(STOP_FOREGROUND_REMOVE)
@@ -112,6 +127,7 @@ class DownloadService : Service() {
 
     override fun onDestroy() {
         main.removeCallbacksAndMessages(null)
+        if (::locks.isInitialized) locks.releaseAll()
         scope.cancel()
         super.onDestroy()
     }

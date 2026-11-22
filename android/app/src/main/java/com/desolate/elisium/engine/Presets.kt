@@ -16,8 +16,8 @@ object Presets {
         Preset("1080p", "1080p", "bestvideo*[height<=1080]+bestaudio/best[height<=1080]"),
         Preset("720p", "720p", "bestvideo*[height<=720]+bestaudio/best[height<=720]"),
         Preset("audio-mp3", "Audio only (MP3)", "bestaudio/best", listOf("-x", "--audio-format", "mp3")),
-        Preset("audio-m4a", "Audio only (M4A)", "bestaudio/best", listOf("-x", "--audio-format", "m4a")),
-        Preset("audio-opus", "Audio only (Opus)", "bestaudio/best", listOf("-x", "--audio-format", "opus")),
+        Preset("audio-m4a", "Audio only (M4A)", "bestaudio[ext=m4a]/bestaudio/best", listOf("-x", "--audio-format", "m4a")),
+        Preset("audio-opus", "Audio only (Opus)", "bestaudio[acodec=opus]/bestaudio/best", listOf("-x", "--audio-format", "opus")),
         Preset("audio-flac", "Audio only (FLAC)", "bestaudio/best", listOf("-x", "--audio-format", "flac")),
         Preset("smallest", "Smallest file", "wv*+wa/w"),
     )

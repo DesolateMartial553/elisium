@@ -44,6 +44,11 @@ data class DownloadRequest(
      * never reads, copies or logs the cookie contents.
      */
     val cookiesFile: File? = null,
+    /**
+     * The probe's info JSON (`--load-info-json`). When set the link is NOT passed to yt-dlp: it loads this lookup
+     * instead of looking the link up again. Null runs from the link exactly as before.
+     */
+    val infoJson: File? = null,
 )
 
 data class DownloadOutcome(

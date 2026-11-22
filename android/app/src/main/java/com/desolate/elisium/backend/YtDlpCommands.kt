@@ -52,11 +52,18 @@ fun buildDownloadArgs(request: DownloadRequest): List<String> {
     // Only the file path goes on the command line; the app never reads or logs its contents.
     request.cookiesFile?.let { args += listOf("--cookies", it.path) }
     args += request.extraArgs
+    request.infoJson?.let { args += listOf("--load-info-json", it.path) }
     return args
 }
 
-/** The argv a downloader would run: the arguments followed by the URL. */
-fun buildDownloadArgv(request: DownloadRequest): List<String> = buildDownloadArgs(request) + request.url
+/** The link the runner is given: none (empty) when yt-dlp loads the saved lookup, else the request's link. */
+fun runnerUrlFor(request: DownloadRequest): String = if (request.infoJson != null) "" else request.url
+
+/** The argv a downloader would run: the arguments followed by the URL (no URL when the saved lookup is loaded). */
+fun buildDownloadArgv(request: DownloadRequest): List<String> {
+    val url = runnerUrlFor(request)
+    return if (url.isEmpty()) buildDownloadArgs(request) else buildDownloadArgs(request) + url
+}
 
 /** The yt-dlp arguments for a probe (`-J`), without the URL. */
 fun buildProbeArgs(url: String, cookiesFile: File? = null): List<String> {

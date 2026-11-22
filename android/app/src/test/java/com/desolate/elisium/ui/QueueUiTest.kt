@@ -81,8 +81,10 @@ class QueueUiTest {
     }
 
     @Test fun titleFallsBackToUrlAndBlankCounts() {
-        assertEquals("https://example.com/v/1", queueItem(title = null).toRowModel().title)
-        assertEquals("https://example.com/v/1", queueItem(title = "  ").toRowModel().title)
+        // A queued card shows the link's host (instant card); a finished or failed one falls back to the link.
+        assertEquals("example.com", queueItem(title = null).toRowModel().title)
+        assertEquals("example.com", queueItem(title = "  ").toRowModel().title)
+        assertEquals("https://example.com/v/1", queueItem(state = "failed", title = null).toRowModel().title)
     }
 
     @Test fun noPercentMeansIndeterminate() {

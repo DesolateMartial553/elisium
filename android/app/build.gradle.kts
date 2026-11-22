@@ -50,7 +50,6 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.youtubedl.library)
     implementation(libs.youtubedl.ffmpeg)
-    implementation(libs.youtubedl.aria2c)
 
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)

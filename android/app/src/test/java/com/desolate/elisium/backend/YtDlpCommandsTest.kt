@@ -53,6 +53,27 @@ class YtDlpCommandsTest {
     }
 
     @Test
+    fun withoutTheSavedLookupTheArgvIsExactlyToday() {
+        // "Faster downloads: Off" (or an unusable lookup) leaves infoJson null: same argv as before, link last.
+        val plain = request()
+        assertEquals(buildDownloadArgs(plain) + "https://youtu.be/dQw4w9WgXcQ", buildDownloadArgv(plain))
+        assertFalse("--load-info-json" in buildDownloadArgv(plain))
+        assertEquals("https://youtu.be/dQw4w9WgXcQ", runnerUrlFor(plain))
+    }
+
+    @Test
+    fun theSavedLookupIsLoadedInsteadOfTheLink() {
+        val withInfo = request().copy(infoJson = File("/data/staging/tmp/item-7.info.json"))
+        val argv = buildDownloadArgv(withInfo)
+        assertEquals("--load-info-json", argv[argv.size - 2])
+        assertEquals("/data/staging/tmp/item-7.info.json", argv.last())
+        assertFalse("the link must not be passed", "https://youtu.be/dQw4w9WgXcQ" in argv)
+        assertEquals("", runnerUrlFor(withInfo))
+        // Everything else is unchanged and in the same order.
+        assertEquals(buildDownloadArgs(request()), argv.dropLast(2))
+    }
+
+    @Test
     fun everyDownloadPassesNoPlaylist() {
         // Items reach the queue as single video URLs (Android has no playlist picker), so a watch?v=..&list=.. link
         // must not pull in the whole playlist. For a real playlist URL the flag changes nothing.

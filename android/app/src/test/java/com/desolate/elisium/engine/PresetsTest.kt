@@ -24,6 +24,10 @@ class PresetsTest {
         for (fmt in listOf("m4a", "opus", "flac")) {
             assertEquals(listOf("-x", "--audio-format", fmt), Presets.PRESETS.getValue("audio-$fmt").extraArgs)
         }
+        // Audio copy: the stream already in the wanted container is taken as it is (no re-encode).
+        assertEquals("bestaudio[ext=m4a]/bestaudio/best", Presets.PRESETS.getValue("audio-m4a").formatSelector)
+        assertEquals("bestaudio[acodec=opus]/bestaudio/best", Presets.PRESETS.getValue("audio-opus").formatSelector)
+        assertEquals("bestaudio/best", Presets.PRESETS.getValue("audio-flac").formatSelector)
         assertEquals("wv*+wa/w", Presets.PRESETS.getValue("smallest").formatSelector)
         assertEquals("Smallest file", Presets.PRESETS.getValue("smallest").label)
         assertEquals("best", Presets.DEFAULT_ID)

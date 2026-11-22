@@ -20,6 +20,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/** Staging -> public folder copy buffer: 1 MiB (Kotlin's `copyTo` default is 8 KiB, many more system calls on a big video). */
+private const val COPY_BUFFER_BYTES = 1 shl 20
+
 /**
  * [OutputStore] that moves finished files into `Download/Elisium/`.
  *
@@ -111,7 +114,7 @@ class MediaStoreOutputStore(context: Context) : OutputStore {
         val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
         try {
             val out = resolver.openOutputStream(uri) ?: throw java.io.IOException("no output stream")
-            out.use { sink -> staged.inputStream().use { it.copyTo(sink) } }
+            out.use { sink -> staged.inputStream().use { it.copyTo(sink, COPY_BUFFER_BYTES) } }
             val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
             resolver.update(uri, done, null, null)
         } catch (e: Throwable) {
@@ -144,7 +147,7 @@ class MediaStoreOutputStore(context: Context) : OutputStore {
         }
         val temp = File(dir, "$name.elisium-tmp")
         try {
-            staged.inputStream().use { input -> temp.outputStream().use { input.copyTo(it) } }
+            staged.inputStream().use { input -> temp.outputStream().use { input.copyTo(it, COPY_BUFFER_BYTES) } }
             if (!temp.renameTo(target)) throw java.io.IOException("rename failed")
         } catch (e: Throwable) {
             temp.delete()

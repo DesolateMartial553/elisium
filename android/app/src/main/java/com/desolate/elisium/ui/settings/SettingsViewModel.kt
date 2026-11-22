@@ -9,6 +9,7 @@ import com.desolate.elisium.media.PhotoMode
 import com.desolate.elisium.media.SongLength
 import com.desolate.elisium.settings.Appearance
 import com.desolate.elisium.settings.CookiesCheck
+import com.desolate.elisium.settings.FasterDownloads
 import com.desolate.elisium.settings.CookiesStatus
 import com.desolate.elisium.settings.CookiesStore
 import com.desolate.elisium.settings.NoCookiesStore
@@ -36,6 +37,14 @@ fun speedLimitError(text: String): SpeedLimitError? =
 
 /** How long the speed-limit field must sit still before what was typed is stored. */
 const val SPEED_LIMIT_DEBOUNCE_MS = 700L
+
+/** Words for the Settings > Downloads > Faster downloads row (same as desktop). */
+const val FASTER_DOWNLOADS_TITLE = "Faster downloads"
+const val FASTER_DOWNLOADS_HELP = "Auto looks each link up once. Turn off if downloads fail."
+
+/** The two choices in display order with their label. */
+fun fasterDownloadsChoices(): List<Pair<FasterDownloads, String>> =
+    listOf(FasterDownloads.Auto to "Auto", FasterDownloads.Off to "Off")
 
 /** Photo-post choices in display order with their label (the settings screen resolves the string). */
 fun photoModeChoices(): List<Pair<PhotoMode, Int>> = listOf(
@@ -74,6 +83,8 @@ data class SettingsUiState(
     val photoMode: PhotoMode = PhotoMode.PhotosSongVideo,
     /** Song length: the post's snippet or the full song. */
     val songLength: SongLength = SongLength.Snippet,
+    /** Faster downloads: Auto (default) or Off. */
+    val fasterDownloads: FasterDownloads = FasterDownloads.Auto,
     /** Nothing imported, or how many cookies the imported cookies.txt holds. */
     val cookies: CookiesStatus = CookiesStatus.None,
     /** Why the last pick was not imported, or null when it was (or nothing was picked yet). */
@@ -125,6 +136,7 @@ class SettingsViewModel(
             reduceMotion = s.reduceMotion,
             photoMode = s.photoMode,
             songLength = s.songLength,
+            fasterDownloads = s.fasterDownloads,
             cookies = jar,
             cookiesRejected = rejected,
             update = upd.first,
@@ -192,6 +204,10 @@ class SettingsViewModel(
 
     fun setSongLength(value: SongLength) {
         scope.launch { store.setSongLength(value) }
+    }
+
+    fun setFasterDownloads(value: FasterDownloads) {
+        scope.launch { store.setFasterDownloads(value) }
     }
 
     /**

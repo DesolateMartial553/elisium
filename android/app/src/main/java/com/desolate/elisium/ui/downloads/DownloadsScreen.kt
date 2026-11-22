@@ -19,6 +19,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -59,6 +62,7 @@ import com.desolate.elisium.ui.stateLabelRes
 import com.desolate.elisium.ui.theme.ElisiumTheme
 import com.desolate.elisium.ui.theme.NumericStyle
 import com.desolate.elisium.ui.theme.Sizes
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -264,6 +268,17 @@ fun QueueRow(
     val percentWord = if (showPercent) stringResource(R.string.percent_spoken, row.percent!!) else null
     val errorLine = row.errorMessage?.let { m -> listOfNotNull(m, row.errorFix).joinToString(" ") }
     val spoken = spokenRow(row.title, stateWord, percentWord, row, errorLine)
+    // After 10 quiet seconds a starting row says why ("Starting... Signing in"); one tick a second while it waits.
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(row.startingSince) {
+        val since = row.startingSince ?: return@LaunchedEffect
+        while (true) {
+            nowMs = System.currentTimeMillis()
+            if (nowMs - since >= STALL_AFTER_MS) break
+            delay(1_000L)
+        }
+    }
+    val side = row.sideAt(nowMs)
     val fraction = row.percent?.let { it / 100f }
     val extras = ElisiumTheme.extras
 
@@ -288,7 +303,7 @@ fun QueueRow(
                 if (row.bar != BarKind.None) FlatProgress(if (row.indeterminate) null else fraction, paused = row.bar == BarKind.Paused)
                 if (errorLine != null) {
                     Text(errorLine, style = MaterialTheme.typography.bodySmall, color = extras.negative)
-                } else if (row.figure.isNotEmpty() || row.stateWord.isNotEmpty() || row.side.isNotEmpty()) {
+                } else if (row.figure.isNotEmpty() || row.stateWord.isNotEmpty() || side.isNotEmpty()) {
                     Row(
                         Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -299,9 +314,9 @@ fun QueueRow(
                         } else if (row.stateWord.isNotEmpty()) {
                             Text(row.stateWord, style = MaterialTheme.typography.titleMedium, color = toneColor(row.tone))
                         }
-                        if (row.side.isNotEmpty()) {
+                        if (side.isNotEmpty()) {
                             Text(
-                                row.side,
+                                side,
                                 style = MaterialTheme.typography.labelSmall.merge(NumericStyle),
                                 color = if (row.tone == Tone.Faint) extras.faint else MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.End,

@@ -11,7 +11,7 @@ private val NULL_SINK: ProcessBuilder.Redirect = ProcessBuilder.Redirect.to(File
  * (`nativeLibraryDir/libffmpeg.so`, `libffprobe.so`) as a child process, with the library's
  * `LD_LIBRARY_PATH` (brief 10A, part 1.2). Compile-verified only: it needs a device.
  *
- * @param ldLibraryPath `<noBackupFilesDir>/youtubedl-android/packages/{python,ffmpeg,aria2c}/usr/lib` joined with `:`.
+ * @param ldLibraryPath `<noBackupFilesDir>/youtubedl-android/packages/{python,ffmpeg}/usr/lib` joined with `:`.
  */
 class ProcessFfmpegSession(
     override val ffmpegPath: String,
@@ -78,7 +78,7 @@ class ProcessFfmpegSession(
             val ffmpeg = File(nativeLibraryDir, "libffmpeg.so")
             if (!ffmpeg.isFile) return null
             val probe = File(nativeLibraryDir, "libffprobe.so").takeIf { it.isFile }
-            val ld = listOf("python", "ffmpeg", "aria2c").joinToString(":") { File(packagesDir, "$it/usr/lib").path }
+            val ld = listOf("python", "ffmpeg").joinToString(":") { File(packagesDir, "$it/usr/lib").path }
             return ProcessFfmpegSession(ffmpeg.path, probe?.path, ld)
         }
     }

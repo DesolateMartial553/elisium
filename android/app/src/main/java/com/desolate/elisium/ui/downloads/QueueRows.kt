@@ -3,6 +3,9 @@ package com.desolate.elisium.ui.downloads
 import com.desolate.elisium.engine.ACTIVE_STATES
 import com.desolate.elisium.engine.DOWNLOADING_STATES
 import com.desolate.elisium.engine.QueueItem
+import com.desolate.elisium.engine.WAIT_NETWORK
+import com.desolate.elisium.engine.WAIT_RATE_LIMITED
+import com.desolate.elisium.engine.WAIT_SIGNING_IN
 import com.desolate.elisium.media.MediaRoute
 import com.desolate.elisium.media.routeFor
 import com.desolate.elisium.service.WAITING_FOR_WIFI
@@ -12,6 +15,7 @@ import com.desolate.elisium.ui.formatBytes
 import com.desolate.elisium.ui.formatSpeed
 import com.desolate.elisium.ui.progressLine
 import com.desolate.elisium.ui.siteName
+import com.desolate.elisium.ui.siteOf
 import com.desolate.elisium.ui.speedWords
 import kotlin.math.roundToInt
 
@@ -105,7 +109,39 @@ data class QueueRowModel(
     val multiFile: Boolean = false,
     /** "Open - Show in folder" is offered (done with a saved file). */
     val canOpen: Boolean = false,
+    /** Queue-clock time the row last moved while it is looking the link up or has no progress yet; null otherwise. */
+    val startingSince: Long? = null,
+    /** The reason "Starting..." shows once the row was quiet for [STALL_AFTER_MS] ("Signing in"...), or null. */
+    val stallReason: String? = null,
 )
+
+/** A row that has not moved for this long says why ("Starting... Signing in"). */
+const val STALL_AFTER_MS = 10_000L
+const val STARTING_WORD = "Starting..."
+const val REASON_SIGNING_IN = "Signing in"
+const val REASON_WAITING_WIFI = "Waiting for Wi-Fi"
+const val REASON_WAITING_NETWORK = "Waiting for the network"
+const val REASON_RATE_LIMITED = "Rate limited, waiting"
+
+/** The reason to show beside "Starting...": rate limit first, then the Wi-Fi hold, a network retry, a sign-in. */
+fun stallReasonFor(hint: String?, waitingForWifi: Boolean): String? = when {
+    hint == WAIT_RATE_LIMITED -> REASON_RATE_LIMITED
+    waitingForWifi -> REASON_WAITING_WIFI
+    hint == WAIT_NETWORK -> REASON_WAITING_NETWORK
+    hint == WAIT_SIGNING_IN -> REASON_SIGNING_IN
+    else -> null
+}
+
+/**
+ * What the small line on the right shows: [base] while the row is moving, or "Starting... <reason>" once a
+ * row that is still starting has been quiet for [STALL_AFTER_MS]. Pure, so the screen only supplies the time.
+ */
+fun stallSide(base: String, startingSince: Long?, reason: String?, nowMs: Long): String {
+    if (startingSince == null || nowMs - startingSince < STALL_AFTER_MS) return base
+    return if (reason == null) STARTING_WORD else "$STARTING_WORD $reason"
+}
+
+fun QueueRowModel.sideAt(nowMs: Long): String = stallSide(side, startingSince, stallReason, nowMs)
 
 private val MIDDLE_DOT = " · "
 
@@ -122,14 +158,18 @@ fun rowMeta(site: String, formatLabel: String?, filesDone: Int?, filesTotal: Int
     return parts.joinToString(MIDDLE_DOT)
 }
 
-/** The title: the real one, else "Looking up the post..." for a post link being probed, else the link. */
+/**
+ * The title: the real one, else "Looking up the post..." for a post link being probed, else (instant card) the
+ * link's host such as `youtube.com` while queued or probing, else the link.
+ */
 fun queueTitle(title: String?, url: String, state: String): String = when {
     !title.isNullOrBlank() -> title
     (state == "queued" || state == "probing") && routeFor(url) != MediaRoute.YTDLP -> LOOKING_UP_TITLE
+    state == "queued" || state == "probing" -> siteOf(url)
     else -> url
 }
 
-fun QueueItem.toRowModel(): QueueRowModel {
+fun QueueItem.toRowModel(holdWifi: Boolean = false): QueueRowModel {
     val running = state in DOWNLOADING_STATES
     val total = filesTotal?.takeIf { it > 0 }
     val pct = when {
@@ -145,6 +185,8 @@ fun QueueItem.toRowModel(): QueueRowModel {
     val figureShown = pct != null && (running || state == "paused")
     val sideBits = listOf(formatSpeed(speed), etaText(eta).let { if (it.isEmpty()) "" else "$it left" }).filter { it.isNotEmpty() }
     val toGo = if (totalBytes != null && downloadedBytes != null && totalBytes > downloadedBytes) formatBytes(totalBytes - downloadedBytes) else ""
+    val starting = state == "probing" || (state == "downloading" && sideBits.isEmpty())
+    val rateLimitedWait = state == "queued" && waitHint == WAIT_RATE_LIMITED
     val savedPath = filePath?.takeIf { it.isNotBlank() }
     val saved = state == "done" && savedPath != null
     return QueueRowModel(
@@ -185,6 +227,8 @@ fun QueueItem.toRowModel(): QueueRowModel {
         side = when {
             running -> sideBits.joinToString(MIDDLE_DOT).ifEmpty { if (state == "merging") "Merging" else if (state == "converting") "Converting" else "Starting" }
             state == "paused" -> if (toGo.isNotEmpty()) "Paused$MIDDLE_DOT$toGo to go" else "Paused"
+            rateLimitedWait -> REASON_RATE_LIMITED
+            state == "queued" && holdWifi -> REASON_WAITING_WIFI
             state == "queued" -> formatBytes(totalBytes).ifEmpty { "Starts next" }
             state == "probing" -> "Looking at the link"
             else -> ""
@@ -203,6 +247,8 @@ fun QueueItem.toRowModel(): QueueRowModel {
         filePath = savedPath,
         multiFile = (filesTotal ?: 0) > 1,
         canOpen = saved,
+        startingSince = if (starting) quietSince else null,
+        stallReason = stallReasonFor(waitHint, holdWifi && state in ACTIVE_STATES),
     )
 }
 

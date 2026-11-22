@@ -19,7 +19,7 @@ data class RunResult(
  */
 interface YtDlpRunner {
     /**
-     * Runs yt-dlp with [args] then [url], blocking until it exits. [onLine] gets every
+     * Runs yt-dlp with [args] then [url] (nothing when [url] is empty), blocking until it exits. [onLine] gets every
      * stdout line (progress templates included). Must not throw for a failing yt-dlp;
      * that is a [RunResult] with a non-zero exit code.
      */
@@ -39,7 +39,8 @@ interface YtDlpRunner {
  */
 class LibraryYtDlpRunner : YtDlpRunner {
     override fun run(args: List<String>, url: String, processId: String, onLine: (String) -> Unit): RunResult {
-        val request = YoutubeDLRequest(url)
+        // An empty url means "none": yt-dlp is given `--load-info-json` instead of a link.
+        val request = YoutubeDLRequest(if (url.isEmpty()) emptyList() else listOf(url))
         request.addCommands(args)
         return try {
             val response = YoutubeDL.getInstance().execute(request, processId) { _, _, line -> onLine(line) }

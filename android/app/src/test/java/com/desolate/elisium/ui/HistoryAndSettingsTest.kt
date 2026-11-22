@@ -168,6 +168,7 @@ class FakeSettingsStore(initial: Settings = Settings()) : SettingsStore {
     override suspend fun setLastYtDlpCheck(value: Long) { state.value = state.value.copy(lastYtDlpCheck = value.coerceAtLeast(0L)) }
     override suspend fun setPhotoMode(value: com.desolate.elisium.media.PhotoMode) { state.value = state.value.copy(photoMode = value) }
     override suspend fun setSongLength(value: com.desolate.elisium.media.SongLength) { state.value = state.value.copy(songLength = value) }
+    override suspend fun setFasterDownloads(value: com.desolate.elisium.settings.FasterDownloads) { state.value = state.value.copy(fasterDownloads = value) }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)

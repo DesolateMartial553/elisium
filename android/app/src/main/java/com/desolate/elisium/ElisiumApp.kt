@@ -23,7 +23,6 @@ import com.desolate.elisium.storage.MediaStoreOutputStore
 import java.io.File
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
-import com.yausername.aria2c.Aria2c
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import android.util.Log
@@ -42,7 +41,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-/** State of the bundled download engine (yt-dlp + ffmpeg + aria2c). */
+/** State of the bundled download engine (yt-dlp + ffmpeg). */
 sealed interface EngineState {
     data object Starting : EngineState
     data class Ready(val ytDlpVersion: String) : EngineState
@@ -82,7 +81,6 @@ class ElisiumApp : Application() {
             _engine.value = try {
                 YoutubeDL.getInstance().init(this@ElisiumApp)
                 FFmpeg.getInstance().init(this@ElisiumApp)
-                Aria2c.getInstance().init(this@ElisiumApp)
                 val version = YoutubeDL.version(this@ElisiumApp) ?: "unknown"
                 _coordinator.value = createCoordinator()
                 EngineState.Ready(version)

@@ -99,7 +99,7 @@ class YoutubeDlBackend(
                     synchronized(lines) { lines.append(line).append('\n') }
                 }
             }
-            val result = runner.run(buildDownloadArgs(request), request.url, processId, onLine)
+            val result = runner.run(buildDownloadArgs(request), runnerUrlFor(request), processId, onLine)
             val log = synchronized(lines) { lines.toString() } + result.stderr
             val pathText = if (pathFile.exists()) pathFile.readText() else null
             pathFile.delete()

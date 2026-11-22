@@ -15,6 +15,16 @@ class SettingsRulesTest {
         assertEquals("best", s.presetId)
         assertTrue(s.wifiOnly)
         assertTrue(s.notifyOnDone)
+        assertEquals(FasterDownloads.Auto, s.fasterDownloads)
+    }
+
+    @Test
+    fun fasterDownloadsStoredValuesFallBackToAuto() {
+        assertEquals(FasterDownloads.Auto, FasterDownloads.fromStored(null))
+        assertEquals(FasterDownloads.Auto, FasterDownloads.fromStored("auto"))
+        assertEquals(FasterDownloads.Off, FasterDownloads.fromStored("off"))
+        assertEquals(FasterDownloads.Auto, FasterDownloads.fromStored("turbo")) // junk or an older file
+        for (mode in FasterDownloads.entries) assertEquals(mode, FasterDownloads.fromStored(mode.storedValue))
     }
 
     @Test

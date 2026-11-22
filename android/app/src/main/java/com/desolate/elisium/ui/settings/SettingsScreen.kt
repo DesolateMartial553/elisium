@@ -65,6 +65,7 @@ import com.desolate.elisium.media.SongLength
 import com.desolate.elisium.settings.Appearance
 import com.desolate.elisium.settings.CookiesCheck
 import com.desolate.elisium.settings.CookiesStatus
+import com.desolate.elisium.settings.FasterDownloads
 import com.desolate.elisium.ui.components.ElisiumButton
 import com.desolate.elisium.ui.components.ElisiumQuietButton
 import com.desolate.elisium.ui.components.ElisiumTextField
@@ -125,6 +126,7 @@ fun SettingsScreen(
         onReduceMotion = vm::setReduceMotion,
         onPhotoMode = vm::setPhotoMode,
         onSongLength = vm::setSongLength,
+        onFasterDownloads = vm::setFasterDownloads,
         onOpenNotificationSettings = { openNotificationSettings(context) },
         onImportCookies = { picker.launch(arrayOf("*/*")) },
         onRemoveCookies = vm::removeCookies,
@@ -188,6 +190,7 @@ fun SettingsContent(
     onReduceMotion: (Boolean) -> Unit = {},
     onPhotoMode: (PhotoMode) -> Unit = {},
     onSongLength: (SongLength) -> Unit = {},
+    onFasterDownloads: (FasterDownloads) -> Unit = {},
     onSpeedLimitDone: () -> Unit = {},
     onImportCookies: () -> Unit = {},
     onRemoveCookies: () -> Unit = {},
@@ -266,6 +269,11 @@ fun SettingsContent(
                     keyboardActions = KeyboardActions(onDone = { onSpeedLimitDone() }),
                     fill = ElisiumTheme.extras.raised,
                 )
+            }
+            Divider()
+            SubHead(FASTER_DOWNLOADS_TITLE, FASTER_DOWNLOADS_HELP)
+            for ((mode, label) in fasterDownloadsChoices()) {
+                ChoiceRow(label = label, selected = mode == state.fasterDownloads, onSelect = { onFasterDownloads(mode) })
             }
             Divider()
             SwitchRow(stringResource(R.string.settings_wifi_only), stringResource(R.string.settings_wifi_only_help), state.wifiOnly, onWifiOnly)

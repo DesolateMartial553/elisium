@@ -87,6 +87,10 @@ data class QueueItem(
     val filesTotal: Int? = null,
     /** A plain-words line under the card ("Already saved", a song note). */
     val note: String? = null,
+    /** Why the item may sit at "Starting" ([WAIT_RATE_LIMITED], [WAIT_NETWORK], [WAIT_SIGNING_IN]), or null. Display only. */
+    val waitHint: String? = null,
+    /** Queue-clock time (ms) the state or the progress last changed: the UI shows a reason after 10 quiet seconds. */
+    val quietSince: Long? = null,
 )
 
 sealed interface QueueEvent {
@@ -110,7 +114,10 @@ private class Entry(
     val url: String,
     val identity: String,
     val videoKey: String?,
+    private val hintFor: (Entry) -> String?,
 ) {
+    /** Which site this link belongs to (rate limiting is per site). */
+    val site: String = siteKey(url)
     var state = "queued"
     var title: String? = null
     var filePath: String? = null
@@ -127,6 +134,10 @@ private class Entry(
     var filesDone: Int? = null
     var filesTotal: Int? = null
     var note: String? = null
+    var quietSince: Long? = null
+
+    /** Steadier speed and time left for the file being downloaded (null until a download starts). */
+    var smoother: SpeedSmoother? = null
 
     /** "Download again anyway": the media archive is ignored for this item's runs. */
     var force = false
@@ -146,7 +157,7 @@ private class Entry(
     fun snapshot() = QueueItem(
         id, recordId, url, identity, videoKey, state, title, filePath, attempts, error,
         stage, downloadedBytes, totalBytes, speed, eta, percent,
-        thumbnail, formatLabel, filesDone, filesTotal, note,
+        thumbnail, formatLabel, filesDone, filesTotal, note, hintFor(this), quietSince,
     )
 }
 
@@ -168,6 +179,8 @@ class DownloadQueue(
     limitRate: String? = null,
     /** The media engine's own archive (`media-archive.txt` beside the yt-dlp one: yt-dlp never writes to it). */
     private val mediaArchive: Archive = Archive(File(archive.file.absoluteFile.parentFile ?: File("."), "media-archive.txt")),
+    /** Milliseconds now; tests pass a fake so the smoothed time left and the quiet stamps are exact. */
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private var formatSelector: String = formatSelector
     private var limitRate: String? = limitRate
@@ -177,6 +190,12 @@ class DownloadQueue(
     private var photoMode: PhotoMode = PhotoMode.PhotosSongVideo
     private var songLength: SongLength = SongLength.Snippet
     private var concurrencyValue: Int = checkConcurrency(concurrency)
+
+    /** "Faster downloads: Auto" (true) lets a download load the probe's info instead of looking the link up again. */
+    private var reuseProbe: Boolean = true
+
+    /** Sites that answered 429 this session: no probe reuse for them and one download at a time. */
+    private val limitedSites = HashSet<String>()
 
     private val entries = HashMap<Int, Entry>()
     private val order = ArrayList<Int>()
@@ -216,6 +235,9 @@ class DownloadQueue(
         require(selector.isNotEmpty()) { "format selector must be a non-empty string" }
         lock.withLock { formatSelector = selector }
     }
+
+    /** Settings > Downloads > Faster downloads: Auto (true) or Off (false), for downloads that start afterwards. */
+    fun setReuseProbe(enabled: Boolean) = lock.withLock { reuseProbe = enabled }
 
     fun setExtraArgs(args: List<String>) = lock.withLock { extraArgs = args.toList() }
 
@@ -291,7 +313,8 @@ class DownloadQueue(
             } catch (_: Exception) {
                 NO_RECORD // disk full or a broken database must not lose the download
             }
-            val entry = Entry(nextId, recordId, clean, identity, key)
+            val entry = Entry(nextId, recordId, clean, identity, key) { waitHintFor(it) }
+            entry.quietSince = clock()
             nextId++
             entry.title = title?.pyStrip()?.ifEmpty { null }
             entry.formatSelector = formatSelector?.ifEmpty { null }
@@ -481,6 +504,7 @@ class DownloadQueue(
         val previous = e.state
         if (previous == state) return
         e.state = state
+        e.quietSince = clock()
         try {
             history.updateState(
                 e.recordId,
@@ -498,6 +522,16 @@ class DownloadQueue(
     }
 
     private fun downloading(): Boolean = entries.values.any { it.state in DOWNLOADING_STATES }
+
+    /** Why [e] may sit at "Starting": rate limited site > retrying after a network error > signing in. Caller holds the lock. */
+    private fun waitHintFor(e: Entry): String? {
+        if (e.state in TERMINAL_STATES || e.state == "paused") return null
+        return waitHint(
+            rateLimited = e.site in limitedSites,
+            retryingNetwork = e.attempts > 0 && e.error?.code == "network",
+            signedIn = cookiesFile != null && isSignedInSite(e.url),
+        )
+    }
 
     // -- internals: staging cleanup ----------------------------------------
     private class StageRef(val processId: String, val videoId: String?, val identity: String)
@@ -518,7 +552,10 @@ class DownloadQueue(
     private fun schedule() {
         lock.withLock {
             while (running && entries.values.count { it.owned } < concurrencyValue) {
-                val next = order.map { entries.getValue(it) }.firstOrNull { it.state == "queued" && !it.owned } ?: break
+                // A site that answered 429 runs one download at a time: its other items wait, the rest go on.
+                val ownedSites = entries.values.filter { it.owned }.map { it.site }
+                val next = order.map { entries.getValue(it) }
+                    .firstOrNull { it.state == "queued" && !it.owned && siteSlotFree(it.site, limitedSites, ownedSites) } ?: break
                 // Claim the slot before the worker starts so we cannot over-fill.
                 next.owned = true
                 scope.launch { work(next) }
@@ -575,9 +612,11 @@ class DownloadQueue(
         if (routeOf(e) == MediaRoute.MEDIA) return runMediaAttempt(e)
 
         var info: JsonObject? = null
+        var probedAt = 0L
         var error: ErrorInfo? = null
         try {
             info = backend.probe(e.url, activeCookiesFile())
+            probedAt = clock()
         } catch (f: ProbeFailure) {
             // Same wording rules as a failed download: the site, not "Instagram".
             error = explain(f.errorText, e.url, activeCookiesFile() != null)
@@ -623,7 +662,7 @@ class DownloadQueue(
                 if (!running || e.state != "probing") return null
                 setState(e, "downloading")
             }
-            error = download(e)
+            error = download(e, info, probedAt)
         }
         if (error == null) return null
         if (error.code == "no_media" && routeOf(e) == MediaRoute.YTDLP_THEN_MEDIA) {
@@ -687,6 +726,7 @@ class DownloadQueue(
                     if (e.token !== attemptToken || e.state !in ACTIVE_STATES) return
                     e.filesDone = done
                     e.filesTotal = total
+                    e.quietSince = clock()
                     e.percent = if (total > 0) (done * 100.0 / total).coerceAtMost(100.0) else null
                     _events.tryEmit(QueueEvent.ProgressChanged(e.id, e.state, e.snapshot()))
                     publishState()
@@ -793,6 +833,7 @@ class DownloadQueue(
         val wait = lock.withLock {
             if (!running || e.state in TERMINAL_STATES || e.state == "paused") return@withLock null
             e.error = error
+            if (isRateLimitCode(error.code)) limitedSites.add(e.site) // this site now runs one at a time, no probe reuse
             if (error.code in RETRYABLE_CODES && e.attempts < BACKOFF_MS.size) {
                 val wait = BACKOFF_MS[e.attempts]
                 e.attempts++
@@ -810,15 +851,67 @@ class DownloadQueue(
         return wait
     }
 
+    /** What one yt-dlp run did, for the "run again from the link" decision. */
+    private class RunInfo {
+        @Volatile var sawProgress = false
+        @Volatile var processFailed = false
+        @Volatile var errorLog = ""
+    }
+
     /**
-     * Runs one download. Returns null on success and on a user pause/cancel, and an
-     * [ErrorInfo] for a real failure.
+     * The probe's info as a private file for `--load-info-json`, or null when it may not or cannot be reused
+     * (Off, media link, rate-limited site, signed-in Instagram/TikTok, playlist/tray, no formats, probe too old).
      */
-    private suspend fun download(e: Entry): ErrorInfo? {
+    private fun prepareInfoFile(e: Entry, info: JsonObject?, probedAt: Long): File? {
+        if (info == null) return null
+        val route = routeOf(e)
+        val allowed = lock.withLock { mayReuseProbe(e.url, reuseProbe, route, HashSet(limitedSites), cookiesFile != null) }
+        if (!allowed || !infoIsUsable(info, clock() - probedAt)) return null
+        return try {
+            stagingDir.mkdirs()
+            writeInfoJson(File(stagingDir, "tmp"), "item-${e.id}.info.json", info)
+        } catch (_: Exception) {
+            null // a file that cannot be written just means the download looks the link up again
+        }
+    }
+
+    /**
+     * Runs the download, loading the probe's info when it may be reused. One immediate re-run from the link (not a
+     * retry, no backoff, no attempt counted) when that run fails before its first progress line or because the
+     * saved lookup went stale (403 / 410 / format not available). The info file is always deleted afterwards.
+     * Returns null on success and on a user pause/cancel, and an [ErrorInfo] for a real failure.
+     */
+    private suspend fun download(e: Entry, info: JsonObject?, probedAt: Long): ErrorInfo? {
+        val infoFile = prepareInfoFile(e, info, probedAt)
+        try {
+            val first = RunInfo()
+            val error = downloadOnce(e, infoFile, first)
+            if (error == null || infoFile == null) return error
+            if (!first.processFailed || !shouldRerunFromUrl(error.code, first.errorLog, first.sawProgress)) return error
+            val again = lock.withLock {
+                if (!running || e.state !in DOWNLOADING_STATES) {
+                    false
+                } else {
+                    if (e.state != "downloading") setState(e, "downloading")
+                    resetProgress(e)
+                    true
+                }
+            }
+            if (!again) return error
+            infoFile.delete()
+            return downloadOnce(e, null, RunInfo())
+        } finally {
+            infoFile?.delete()
+        }
+    }
+
+    /** One yt-dlp run ([infoFile] loaded, or the link when null). Same return contract as [download]. */
+    private suspend fun downloadOnce(e: Entry, infoFile: File?, run: RunInfo): ErrorInfo? {
         val token = Any()
         val cookies = activeCookiesFile()
         val request = lock.withLock {
             e.token = token
+            e.smoother = SpeedSmoother()
             DownloadRequest(
                 url = e.url,
                 formatSelector = e.formatSelector ?: formatSelector,
@@ -829,11 +922,15 @@ class DownloadQueue(
                 processId = "item-${e.id}",
                 expectedBytes = e.expectedBytes,
                 cookiesFile = cookies,
+                infoJson = infoFile,
             )
         }
         val outcome: DownloadOutcome = try {
             stagingDir.mkdirs()
-            val handle = backend.start(request) { progress -> onProgress(e, token, progress) }
+            val handle = backend.start(request) { progress ->
+                run.sawProgress = true
+                onProgress(e, token, progress)
+            }
             val stopNow = lock.withLock {
                 e.handle = handle
                 e.state == "paused" || e.state == "cancelled"
@@ -927,6 +1024,8 @@ class DownloadQueue(
             }
             return null
         }
+        run.processFailed = true
+        run.errorLog = outcome.errorLog
         return explain(outcome.errorLog, e.url, cookies != null)
     }
 
@@ -937,10 +1036,22 @@ class DownloadQueue(
             val housekeeping = p.postprocessor != null && p.stage == "downloading"
             if (p.stage in STAGES && e.state != p.stage && !housekeeping) setState(e, p.stage)
             e.stage = p.stage
+            if ((p.downloadedBytes != null && p.downloadedBytes != e.downloadedBytes) || (p.percent != null && p.percent != e.percent)) {
+                e.quietSince = clock() // moving again: the "Starting" reason timer starts over
+            }
             p.downloadedBytes?.let { e.downloadedBytes = it }
             p.totalBytes?.let { e.totalBytes = it }
-            p.speed?.let { e.speed = it }
-            p.eta?.let { e.eta = it }
+            var speed = p.speed
+            var eta = p.eta
+            val smoother = e.smoother
+            if (smoother != null && p.stage == "downloading" && !housekeeping && p.downloadedBytes != null) {
+                // Steadier numbers: the first 2 s of a file stay as reported, then an EMA of the speed.
+                val steady = smoother.update(clock(), p.downloadedBytes, e.totalBytes, p.speed, p.eta)
+                speed = steady.speed
+                eta = steady.eta
+            }
+            speed?.let { e.speed = it }
+            eta?.let { e.eta = it }
             p.percent?.let { e.percent = it }
             _events.tryEmit(QueueEvent.ProgressChanged(e.id, e.state, e.snapshot()))
             publishState()

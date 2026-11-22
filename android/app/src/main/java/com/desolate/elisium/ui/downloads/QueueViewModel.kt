@@ -2,6 +2,7 @@ package com.desolate.elisium.ui.downloads
 
 import com.desolate.elisium.engine.QueueItem
 import com.desolate.elisium.engine.TERMINAL_STATES
+import com.desolate.elisium.service.WAITING_FOR_WIFI
 import com.desolate.elisium.service.extractUrls
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
@@ -50,8 +51,10 @@ class QueueViewModel(
     stateLabel: (String) -> String = { it },
     percentLabel: (Int) -> String = { "$it percent" },
 ) {
-    val rows: StateFlow<List<QueueRowModel>> = gateway.items
-        .map { list -> list.map { it.toRowModel() } }
+    val rows: StateFlow<List<QueueRowModel>> = combine(gateway.items, gateway.holdReason) { list, hold ->
+        val waitingForWifi = hold == WAITING_FOR_WIFI
+        list.map { it.toRowModel(waitingForWifi) }
+    }
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     private val _filter = MutableStateFlow(QueueFilter.All)
