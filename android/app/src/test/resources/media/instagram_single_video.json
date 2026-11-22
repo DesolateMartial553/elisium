@@ -1,0 +1,23 @@
+{
+  "status": "ok",
+  "items": [
+    {
+      "pk": 3111111111111111101,
+      "id": "3111111111111111101_9000000001",
+      "code": "CmadeUp0002",
+      "media_type": 2,
+      "taken_at": 1701000100,
+      "user": { "username": "example_user" },
+      "caption": { "text": "A made-up video caption" },
+      "image_versions2": {
+        "candidates": [
+          { "url": "https://cdn.example.com/v/thumb.jpg", "width": 640, "height": 1136 }
+        ]
+      },
+      "video_versions": [
+        { "url": "https://cdn.example.com/v/video-720.mp4", "width": 720, "height": 1280 },
+        { "url": "https://cdn.example.com/v/video-1080.mp4", "width": 1080, "height": 1920 }
+      ]
+    }
+  ]
+}

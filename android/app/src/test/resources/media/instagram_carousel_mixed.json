@@ -1,0 +1,50 @@
+{
+  "status": "ok",
+  "items": [
+    {
+      "pk": 3111111111111111200,
+      "id": "3111111111111111200_9000000001",
+      "code": "CmadeUp0003",
+      "media_type": 8,
+      "taken_at": 1701000200,
+      "user": { "username": "example_user" },
+      "caption": { "text": "A made-up mixed carousel" },
+      "carousel_media": [
+        {
+          "pk": 3111111111111111201,
+          "id": "3111111111111111201_9000000001",
+          "media_type": 1,
+          "image_versions2": {
+            "candidates": [
+              { "url": "https://cdn.example.com/c/1-small.jpg", "width": 640, "height": 800 },
+              { "url": "https://cdn.example.com/c/1.jpg", "width": 1080, "height": 1350 }
+            ]
+          }
+        },
+        {
+          "pk": 3111111111111111202,
+          "id": "3111111111111111202_9000000001",
+          "media_type": 2,
+          "image_versions2": {
+            "candidates": [
+              { "url": "https://cdn.example.com/c/2-thumb.jpg", "width": 640, "height": 800 }
+            ]
+          },
+          "video_versions": [
+            { "url": "https://cdn.example.com/c/2.mp4", "width": 720, "height": 1280 }
+          ]
+        },
+        {
+          "pk": 3111111111111111203,
+          "id": "3111111111111111203_9000000001",
+          "media_type": 1,
+          "image_versions2": {
+            "candidates": [
+              { "url": "https://cdn.example.com/c/3.jpg", "width": 1080, "height": 1080 }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

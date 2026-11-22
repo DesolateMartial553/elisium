@@ -1,0 +1,16 @@
+{
+  "id": "7300000000000000002",
+  "desc": "A made-up video item",
+  "createTime": 1702000100,
+  "author": { "uniqueId": "example_user" },
+  "video": {
+    "playAddr": "https://cdn.example.com/tiktok/video.mp4",
+    "width": 1080,
+    "height": 1920
+  },
+  "music": {
+    "playUrl": "https://cdn.example.com/tiktok/sound.mp3",
+    "title": "Sound Title",
+    "authorName": "Sound Artist"
+  }
+}

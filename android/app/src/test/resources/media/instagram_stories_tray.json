@@ -1,0 +1,48 @@
+{
+  "status": "ok",
+  "reels_media": [
+    {
+      "id": "18000000000000001",
+      "user": { "username": "example_user" },
+      "items": [
+        {
+          "pk": 3222222222222222201,
+          "id": "3222222222222222201_9000000001",
+          "media_type": 1,
+          "taken_at": 1701000500,
+          "image_versions2": {
+            "candidates": [
+              { "url": "https://cdn.example.com/story/1.jpg", "width": 1080, "height": 1920 }
+            ]
+          },
+          "story_music_stickers": [
+            {
+              "music_asset_info": {
+                "id": "7000000000000003",
+                "progressive_download_url": "https://cdn.example.com/audio/story-song.m4a",
+                "title": "Story Song",
+                "display_artist": "Example Artist",
+                "highlight_start_times_in_ms": [5000],
+                "duration_in_ms": 15000
+              }
+            }
+          ]
+        },
+        {
+          "pk": 3222222222222222202,
+          "id": "3222222222222222202_9000000001",
+          "media_type": 2,
+          "taken_at": 1701000600,
+          "image_versions2": {
+            "candidates": [
+              { "url": "https://cdn.example.com/story/2-thumb.jpg", "width": 1080, "height": 1920 }
+            ]
+          },
+          "video_versions": [
+            { "url": "https://cdn.example.com/story/2.mp4", "width": 720, "height": 1280 }
+          ]
+        }
+      ]
+    }
+  ]
+}

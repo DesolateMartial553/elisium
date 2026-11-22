@@ -1,0 +1,30 @@
+{
+  "id": "7300000000000000001",
+  "desc": "A made-up slideshow caption",
+  "createTime": 1702000000,
+  "author": { "uniqueId": "example_user" },
+  "imagePost": {
+    "images": [
+      {
+        "imageURL": {
+          "urlList": [
+            "https://cdn.example.com/tiktok/1.jpeg",
+            "https://cdn.example.com/tiktok/1-small.jpeg"
+          ]
+        },
+        "imageWidth": 1080,
+        "imageHeight": 1440
+      },
+      {
+        "imageURL": { "urlList": ["https://cdn.example.com/tiktok/2.jpeg"] },
+        "imageWidth": 720,
+        "imageHeight": 960
+      }
+    ]
+  },
+  "music": {
+    "playUrl": "https://cdn.example.com/tiktok/sound.mp3",
+    "title": "Sound Title",
+    "authorName": "Sound Artist"
+  }
+}

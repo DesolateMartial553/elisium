@@ -1,0 +1,34 @@
+{
+  "status": "ok",
+  "items": [
+    {
+      "pk": 3111111111111111301,
+      "id": "3111111111111111301_9000000001",
+      "code": "CmadeUp0004",
+      "media_type": 1,
+      "taken_at": 1701000300,
+      "user": { "username": "example_user" },
+      "caption": { "text": "A made-up photo post with a song" },
+      "image_versions2": {
+        "candidates": [
+          { "url": "https://cdn.example.com/m/photo.jpg", "width": 1080, "height": 1350 }
+        ]
+      },
+      "music_metadata": {
+        "music_info": {
+          "music_asset_info": {
+            "id": "7000000000000001",
+            "progressive_download_url": "https://cdn.example.com/audio/example-song.m4a",
+            "title": "Example Song",
+            "display_artist": "Example Artist",
+            "duration_in_ms": 30000
+          },
+          "music_consumption_info": {
+            "highlight_start_times_in_ms": [15400],
+            "duration_in_ms": 15000
+          }
+        }
+      }
+    }
+  ]
+}
