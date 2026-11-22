@@ -551,6 +551,7 @@ class MixResult:
     note: str | None = None
     attempted_video: bool = False  # a mix was wanted (so files_total counted it)
     cancelled: bool = False
+    removed_songs: int = 0  # songs deleted because the setting is "Photos only"
     notes: list[str] = field(default_factory=list)
 
 
@@ -611,6 +612,9 @@ def process_staging(
     ffprobe: str | None = None,
     job: MixJob | None = None,
     on_convert: Callable[[], None] | None = None,
+    make_video: bool = True,
+    keep_song: bool = True,
+    cut_song: bool = True,
 ) -> MixResult:
     """Cut the song snippet and build the video in the staging *directory*.
 
@@ -621,6 +625,10 @@ def process_staging(
       moves the item to ``converting`` there);
     * *existing_dir* is the output folder: a mix of this post already there is
       never built again.
+
+    The photo/song settings (brief 10C): ``make_video=False`` builds no mp4,
+    ``keep_song=False`` deletes the song (photos only), ``cut_song=False``
+    keeps the full song without a note (the user asked for it).
 
     Never raises for an ffmpeg problem; check :attr:`MixResult.cancelled`.
     """
@@ -648,6 +656,11 @@ def process_staging(
             if (found := infos[c]) is not None and found.has_audio and not found.has_video
         ]
         videos = [v for v in videos if v not in songs]
+    if not keep_song:
+        for extra in songs:
+            _remove(extra)
+        result.removed_songs = len(songs)
+        return result
     if len(songs) != 1:
         return result  # no song, or a tray of several: nothing to cut or mix
     song = songs[0]
@@ -655,18 +668,20 @@ def process_staging(
     result.song = song
 
     already_cut = song.stem.endswith(" song")
-    times = None if already_cut else _snippet_in_staging(staging, song)
+    times = None if already_cut or not cut_song else _snippet_in_staging(staging, song)
     base = song_base(song.name)
     existing_mix = (
         skip_names[0]
         if skip_names
         else find_existing_mix(existing_dir, marker)
     )
-    wants_video = bool(visuals) and existing_mix is None
+    wants_video = make_video and bool(visuals) and existing_mix is None
     result.attempted_video = wants_video
 
     if not ffmpeg:
-        if times is None and not already_cut:
+        if not cut_song:
+            pass
+        elif times is None and not already_cut:
             result.notes.append(FULL_SONG_NOTE)
         elif times is not None:
             result.notes.append(TRIM_FAILED_NOTE)
@@ -696,6 +711,8 @@ def process_staging(
         # -- 1. the snippet ------------------------------------------------
         if already_cut:
             pass
+        elif not cut_song:
+            pass  # "Full song": nothing to cut, nothing to explain
         elif times is None:
             result.notes.append(FULL_SONG_NOTE)
         else:

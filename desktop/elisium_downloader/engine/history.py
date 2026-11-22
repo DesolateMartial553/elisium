@@ -48,9 +48,13 @@ CREATE TABLE IF NOT EXISTS downloads (
     error_message TEXT,
     file_path TEXT,
     created_at TEXT NOT NULL,
-    finished_at TEXT
+    finished_at TEXT,
+    note TEXT,
+    files_total INTEGER
 )
 """
+# Columns added after the first release: an older file gets them on open.
+_ADDED_COLUMNS = (("note", "TEXT"), ("files_total", "INTEGER"))
 
 _COLUMNS = (
     "id",
@@ -63,6 +67,8 @@ _COLUMNS = (
     "file_path",
     "created_at",
     "finished_at",
+    "note",
+    "files_total",
 )
 
 
@@ -101,6 +107,10 @@ class History:
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             self._conn.execute(_SCHEMA)
+            have = {r["name"] for r in self._conn.execute("PRAGMA table_info(downloads)")}
+            for name, kind in _ADDED_COLUMNS:
+                if name not in have:
+                    self._conn.execute(f"ALTER TABLE downloads ADD COLUMN {name} {kind}")
 
     # -- plumbing --------------------------------------------------------
     def close(self) -> None:
@@ -142,6 +152,8 @@ class History:
         error_message: str | None = None,
         file_path: str | None = None,
         created_at: str | None = None,
+        note: str | None = None,
+        files_total: int | None = None,
     ) -> int:
         """Insert one download and return its row id."""
         if not isinstance(url, str) or not url.strip():
@@ -150,8 +162,8 @@ class History:
         cursor_id, _ = self._write(
             "INSERT INTO downloads"
             " (url, video_key, title, state, error_code, error_message,"
-            "  file_path, created_at, finished_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "  file_path, created_at, finished_at, note, files_total)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 url.strip(),
                 video_key,
@@ -162,6 +174,8 @@ class History:
                 file_path,
                 created_at or _now(),
                 _now() if state in TERMINAL_STATES else None,
+                note,
+                files_total,
             ),
         )
         return cursor_id
@@ -175,12 +189,17 @@ class History:
         error_message: str | None = None,
         file_path: str | None = None,
         clear_error: bool = False,
+        note: str | None = None,
+        clear_note: bool = False,
+        files_total: int | None = None,
     ) -> bool:
         """Move one download to *state*. Returns ``False`` for an unknown id.
 
         ``error_code``, ``error_message`` and ``file_path`` are only written
         when not ``None``; pass ``clear_error=True`` to reset the two error
-        columns (a retry or a success after a failure). ``finished_at`` is
+        columns (a retry or a success after a failure). ``note`` (a short remark on a
+        finished item, brief 10C) works like ``file_path``; ``clear_note`` resets it.
+        ``finished_at`` is
         stamped for a terminal state and cleared when the item becomes active
         again.
         """
@@ -199,6 +218,14 @@ class History:
         if file_path is not None:
             assignments.append("file_path = ?")
             params.append(file_path)
+        if note is not None:
+            assignments.append("note = ?")
+            params.append(note)
+        elif clear_note:
+            assignments.append("note = NULL")
+        if files_total is not None:
+            assignments.append("files_total = ?")
+            params.append(int(files_total))
         if state in TERMINAL_STATES:
             assignments.append("finished_at = COALESCE(finished_at, ?)")
             params.append(_now())

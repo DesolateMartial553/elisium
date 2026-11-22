@@ -138,7 +138,7 @@ def test_open_file_and_folder(hist, monkeypatch) -> None:
 
 def test_download_again_calls_queue(hist, ui_queue, monkeypatch) -> None:
     added = []
-    monkeypatch.setattr(ui_queue, "add", lambda url: added.append(url) or {})
+    monkeypatch.setattr(ui_queue, "add", lambda url, **kw: added.append(url) or {})
     select_title(hist, "Beta clip")
     hist.again_button.click()
     assert added == ["https://example.com/watch/2"]

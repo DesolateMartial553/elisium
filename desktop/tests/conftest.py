@@ -47,6 +47,14 @@ def _never_run_the_real_ffmpeg(monkeypatch):
     monkeypatch.setattr(mix, "find_ffprobe", lambda: None)
 
 
+@pytest.fixture(autouse=True)
+def _never_talk_to_the_real_file_manager(monkeypatch):
+    """"Show in folder" asks the file manager over D-Bus; no test may do that (brief 10C)."""
+    from elisium_downloader.ui import widgets
+
+    monkeypatch.setattr(widgets, "_show_item", lambda path: False)
+
+
 @pytest.fixture(scope="session")
 def qapp():
     from PySide6.QtWidgets import QApplication

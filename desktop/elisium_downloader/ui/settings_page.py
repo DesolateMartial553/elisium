@@ -309,19 +309,27 @@ class SettingsPage(QWidget):
                               [self.preset_combo], self.preset_combo)
         group("Downloads", [parallel, speed, quality])
 
-        # -- Photos and music (how the engine saves them; nothing to switch yet) --
-        group("Photos and music", [
-            _SettingRow("Photo posts with a song",
-                        self._helper("The photos and the song are kept; ffmpeg joins them into a "
-                                     "video when it is installed"),
-                        [self._value("Photos, song and video", "Photo posts with a song",
-                                     "Photo posts with a song are saved as the photos, the song "
-                                     "and a video of them together.")]),
-            _SettingRow("Song length", self._helper("Only the part the post plays"),
-                        [self._value("Post's snippet", "Song length",
-                                     "The song is cut to the part the post plays.")],
-                        rule=False),
-        ])
+        # -- Photos and music ----------------------------------------------
+        self.photo_mode_combo = QComboBox()
+        for label, key in (("Photos, song and video", "video"),
+                           ("Photos and song only", "song"),
+                           ("Photos only", "photos")):
+            self.photo_mode_combo.addItem(label, key)
+        self._describe(self.photo_mode_combo, "Photo posts with a song",
+                       "What to save from a photo post that has a song: the photos, the song "
+                       "and a video of them together; the photos and the song; or the photos only.")
+        photo_mode = _SettingRow(
+            "Photo posts with a song",
+            self._helper("The video needs ffmpeg; without it the photos and the song are kept"),
+            [self.photo_mode_combo], self.photo_mode_combo)
+        self.song_length_combo = QComboBox()
+        for label, key in (("Post's snippet", "snippet"), ("Full song", "full")):
+            self.song_length_combo.addItem(label, key)
+        self._describe(self.song_length_combo, "Song length",
+                       "Cut the song to the part the post plays, or keep the whole song.")
+        song_length = _SettingRow("Song length", self._helper("Only the part the post plays, or all of it"),
+                                  [self.song_length_combo], self.song_length_combo, rule=False)
+        group("Photos and music", [photo_mode, song_length])
 
         # -- Accounts ------------------------------------------------------
         self.detect_label = _WrapLabel("")
@@ -443,6 +451,7 @@ class SettingsPage(QWidget):
             self.concurrency_spin.valueChanged, self.limit_check.toggled,
             self.limit_spin.valueChanged, self.limit_unit.currentIndexChanged,
             self.preset_combo.currentIndexChanged, self.cookies_combo.currentIndexChanged,
+            self.photo_mode_combo.currentIndexChanged, self.song_length_combo.currentIndexChanged,
             self.notify_check.toggled,
             self.tray_check.toggled, self.appearance_combo.currentIndexChanged,
             self.motion_check.toggled,
@@ -458,7 +467,9 @@ class SettingsPage(QWidget):
         self.setTabOrder(self.limit_check, self.limit_spin)
         self.setTabOrder(self.limit_spin, self.limit_unit)
         self.setTabOrder(self.limit_unit, self.preset_combo)
-        self.setTabOrder(self.preset_combo, self.detect_button)
+        self.setTabOrder(self.preset_combo, self.photo_mode_combo)
+        self.setTabOrder(self.photo_mode_combo, self.song_length_combo)
+        self.setTabOrder(self.song_length_combo, self.detect_button)
         self.setTabOrder(self.detect_button, self.cookies_combo)
         self.setTabOrder(self.cookies_combo, self.cookies_choose_button)
         self.setTabOrder(self.cookies_choose_button, self.cookies_clear_button)
@@ -536,6 +547,8 @@ class SettingsPage(QWidget):
             self.limit_spin.setValue(number)
             self.limit_unit.setCurrentIndex(0 if unit == "K" else 1)
         self.preset_combo.setCurrentIndex(max(0, self.preset_combo.findData(s.preset_id)))
+        self.photo_mode_combo.setCurrentIndex(max(0, self.photo_mode_combo.findData(s.photo_mode)))
+        self.song_length_combo.setCurrentIndex(max(0, self.song_length_combo.findData(s.song_length)))
         self.cookies_combo.setCurrentIndex(max(0, self.cookies_combo.findData(s.cookies_browser)))
         self.cookies_file_edit.setText(s.cookies_file or "")
         self.cookies_file_edit.setToolTip(s.cookies_file or "")
@@ -569,6 +582,8 @@ class SettingsPage(QWidget):
             reduce_motion=self.motion_check.isChecked(),
             cookies_browser=self.cookies_combo.currentData(),
             cookies_file=self.cookies_file_edit.text().strip() or None,
+            photo_mode=self.photo_mode_combo.currentData(),
+            song_length=self.song_length_combo.currentData(),
         )
         if self.path is not None:
             try:

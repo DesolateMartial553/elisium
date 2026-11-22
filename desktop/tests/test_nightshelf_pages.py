@@ -172,7 +172,7 @@ def test_clicking_a_row_link_runs_the_action(hist, monkeypatch) -> None:
     opened = []
     monkeypatch.setattr(hp.QDesktopServices, "openUrl", lambda url: opened.append(url.toLocalFile()))
     added = []
-    monkeypatch.setattr(hist.queue, "add", lambda url: added.append(url) or {})
+    monkeypatch.setattr(hist.queue, "add", lambda url, **kw: added.append(url) or {})
     index = hist.model.index(0, 0)
     rect = hist.table.visualRect(index)
     geo = hist.delegate.geometry(rect, hist.model.row_at(0), hist.table.font(), True)

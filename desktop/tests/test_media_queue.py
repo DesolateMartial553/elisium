@@ -330,7 +330,31 @@ def test_archived_slides_are_skipped_and_the_rest_fetched(media_harness) -> None
     assert (item["progress"]["files_done"], item["progress"]["files_total"]) == (3, 3)
 
 
-def test_everything_already_archived_is_skipped(media_harness) -> None:
+def test_everything_already_archived_and_present_is_skipped_with_a_note(media_harness) -> None:
+    """Brief 10C: archived and still in the folder -> skipped, "Already saved", no second run."""
+    h = media_harness(
+        fixture="instagram_carousel_mixed.json",
+        bracket_ids=True,
+        archive_lines=[
+            "instagram:3301000000000000001:1",
+            "instagram:3301000000000000002:2",
+            "instagram:3301000000000000003:3",
+        ],
+    )
+    folder = h.out / "cafe_northfield"
+    folder.mkdir()
+    for num, ext in ((1, "jpg"), (2, "mp4"), (3, "jpg")):
+        (folder / f"cafe_northfield [330100000000000000{num}] {num}.{ext}").write_text("mine")
+    item = h.run_one(f"{IG}/stories/cafe_northfield/")
+    assert item["state"] == "skipped"
+    assert item["error"]["code"] == "already_downloaded"
+    assert item["note"] == "Already saved"
+    assert len(h.gdl_downloads()) == 1  # nothing was missing, so no run without the archive
+    assert len(list(folder.iterdir())) == 3
+
+
+def test_archived_but_deleted_files_come_back_without_the_archive(media_harness) -> None:
+    """Brief 10C: the archive remembers the post, the files are gone -> one more run, no archive."""
     h = media_harness(
         fixture="instagram_carousel_mixed.json",
         archive_lines=[
@@ -340,9 +364,12 @@ def test_everything_already_archived_is_skipped(media_harness) -> None:
         ],
     )
     item = h.run_one(f"{IG}/stories/cafe_northfield/")
-    assert item["state"] == "skipped"
-    assert item["error"]["code"] == "already_downloaded"
-    assert not (h.out / "cafe_northfield").exists()
+    assert item["state"] == "done" and item["note"] is None
+    runs = h.gdl_downloads()
+    assert len(runs) == 2
+    assert "--download-archive" in runs[0] and "--download-archive" not in runs[1]
+    assert len(list((h.out / "cafe_northfield").iterdir())) == 3
+    assert item["progress"]["files_done"] == 3 == item["progress"]["files_total"]
 
 
 def test_existing_output_file_is_never_overwritten(media_harness) -> None:

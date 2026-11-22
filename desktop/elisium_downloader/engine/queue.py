@@ -51,6 +51,9 @@ __all__ = [
     "DEFAULT_CONCURRENCY",
     "REUSE_PROBE_MAX_AGE",
     "ALREADY_DOWNLOADED",
+    "ALREADY_SAVED_NOTE",
+    "PHOTO_MODES",
+    "SONG_LENGTHS",
     "QueueItem",
     "DownloadQueue",
 ]
@@ -87,6 +90,12 @@ ALREADY_DOWNLOADED = ErrorInfo(
     "Already downloaded.", "It is in the download folder", "already_downloaded"
 )
 _UNKNOWN = ErrorInfo("Download failed.", "See Details", "unknown")
+# Brief 10C: the note on a media item whose files were all in the folder already.
+ALREADY_SAVED_NOTE = "Already saved"
+# "Photo posts with a song": the photos, the song and a video / the photos and the
+# song / the photos only. "Song length": the part the post plays / the whole song.
+PHOTO_MODES: tuple[str, ...] = ("video", "song", "photos")
+SONG_LENGTHS: tuple[str, ...] = ("snippet", "full")
 # yt-dlp prints this and exits 0 when the archive already holds the video.
 _ARCHIVE_SKIP_TEXT = "has already been recorded in the archive"
 
@@ -108,6 +117,47 @@ def _title_from(info: Any) -> str | None:
     if isinstance(title, str) and title.strip():
         return title.strip()
     return None
+
+
+def _thumbnail_from(info: Any) -> str | None:
+    """The probe's picture link (display only): ``thumbnail``, else the last of ``thumbnails``."""
+    if not isinstance(info, Mapping):
+        return None
+    found = info.get("thumbnail")
+    if not (isinstance(found, str) and found.strip()):
+        found = None
+        thumbs = info.get("thumbnails")
+        if isinstance(thumbs, list):
+            for thumb in reversed(thumbs):
+                url = thumb.get("url") if isinstance(thumb, Mapping) else None
+                if isinstance(url, str) and url.strip():
+                    found = url
+                    break
+    if found is None or not found.strip().lower().startswith(("http://", "https://")):
+        return None
+    return found.strip()
+
+
+def _format_label_from(info: Any, extra_args: Sequence[str]) -> str | None:
+    """A short label such as ``1080p MP4`` or ``MP3 audio`` (display only)."""
+    if not isinstance(info, Mapping):
+        return None
+    args = list(extra_args)
+    if "-x" in args or "--extract-audio" in args:
+        fmt = ""
+        if "--audio-format" in args:
+            at = args.index("--audio-format") + 1
+            fmt = args[at].upper() if at < len(args) else ""
+        return f"{fmt} audio" if fmt else "Audio"
+    ext = info.get("ext")
+    ext = ext.upper() if isinstance(ext, str) and ext.strip() else ""
+    height = info.get("height")
+    quality = (
+        f"{height}p"
+        if isinstance(height, int) and not isinstance(height, bool) and height > 0
+        else ""
+    )
+    return " ".join(p for p in (quality, ext) if p) or None
 
 
 def _info_is_usable(info: Any, age: float | None) -> bool:
@@ -230,6 +280,12 @@ class QueueItem:
     # A short plain-language remark on a finished item (brief 10B-2), e.g.
     # "Kept the full song: ...". Not stored in the history.
     note: str | None = None
+    # Display only (brief 10C): the probe's picture link and a short format
+    # label ("1080p MP4", "6 photos + song"). Never written to the history.
+    thumbnail: str | None = None
+    format_label: str | None = None
+    # "Download again anyway": run the media engine without its archive.
+    force: bool = False
 
     def snapshot(self) -> dict[str, Any]:
         """A plain-dict view for the UI and for events."""
@@ -243,6 +299,8 @@ class QueueItem:
             "title": self.title,
             "file_path": self.file_path,
             "note": self.note,
+            "thumbnail": self.thumbnail,
+            "format_label": self.format_label,
             "attempts": self.attempts,
             "error": None
             if self.error is None
@@ -310,6 +368,8 @@ class DownloadQueue:
         self._format_selector = format_selector
         self._limit_rate = limit_rate
         self._extra_args: tuple[str, ...] = ()
+        self._photo_mode = "video"
+        self._song_length = "snippet"
         self._cookies_browser: str | None = None
         self._cookies_file: str | None = None
         self._sleep = sleep
@@ -386,6 +446,23 @@ class DownloadQueue:
         """Set extra yt-dlp arguments for downloads that start after this call."""
         with self._cond:
             self._extra_args = tuple(str(a) for a in args)
+
+    def set_photo_mode(self, mode: str) -> None:
+        """"video" (photos, song and video), "song" (photos and song) or "photos".
+
+        Applies to posts that start after this call.
+        """
+        if mode not in PHOTO_MODES:
+            raise ValueError(f"photo mode must be one of {PHOTO_MODES}, got {mode!r}")
+        with self._cond:
+            self._photo_mode = mode
+
+    def set_song_length(self, length: str) -> None:
+        """"snippet" (the part the post plays) or "full" (the whole song)."""
+        if length not in SONG_LENGTHS:
+            raise ValueError(f"song length must be one of {SONG_LENGTHS}, got {length!r}")
+        with self._cond:
+            self._song_length = length
 
     def set_cookies(
         self, browser: str | None, file: str | os.PathLike[str] | None
@@ -469,8 +546,14 @@ class DownloadQueue:
         format_selector: str | None = None,
         extra_args: Sequence[str] | None = None,
         title: str | None = None,
+        force: bool = False,
     ) -> dict[str, Any]:
         """Queue *url*; a duplicate of an existing item returns that item.
+
+        *force* is "Download again anyway": a photo post, story or slideshow then
+        runs without gallery-dl's archive (which remembers posts whose files were
+        deleted). A finished or failed duplicate of such a link goes back to the
+        queue; a running one is returned unchanged. Ignored for yt-dlp links.
 
         *format_selector* and *extra_args* override the queue defaults for this
         item only; *title* is shown until the probe supplies the real one. A
@@ -490,7 +573,14 @@ class DownloadQueue:
             existing = self._by_identity.get(identity)
             if existing is not None:
                 found = self._items[existing]
-                if found.state in ("done", "skipped") and not self._file_present(
+                if (
+                    force
+                    and found.state in TERMINAL_STATES
+                    and media.route_for(found.url) != "ytdlp"
+                ):
+                    found.force = True
+                    self._requeue_missing(found)
+                elif found.state in ("done", "skipped") and not self._file_present(
                     found
                 ):
                     self._requeue_missing(found)
@@ -505,6 +595,7 @@ class DownloadQueue:
                 title=title.strip() if isinstance(title, str) and title.strip() else None,
                 format_selector=format_selector or None,
                 extra_args=None if extra_args is None else tuple(str(a) for a in extra_args),
+                force=bool(force) and media.route_for(clean) != "ytdlp",
             )
             self._next_id += 1
             self._items[item.id] = item
@@ -558,6 +649,7 @@ class DownloadQueue:
         item.total_bytes = None
         item.speed = None
         item.eta = None
+        item.note = None
         self._set_state(item, "queued", clear_error=True)
         self._cond.notify_all()
 
@@ -702,6 +794,12 @@ class DownloadQueue:
             kwargs["clear_error"] = True
         if file_path is not None:
             kwargs["file_path"] = file_path
+        if item.note:
+            kwargs["note"] = item.note
+        elif state in ("queued", "probing"):
+            kwargs["clear_note"] = True
+        if state in TERMINAL_STATES and item.files_total:
+            kwargs["files_total"] = item.files_total
         self.history.update_state(item.record_id, state, **kwargs)
         self._emit(
             {
@@ -846,9 +944,18 @@ class DownloadQueue:
         else:
             self._learn_archive_key(item, info)
             title = _title_from(info)
-            if title is not None:
+            with self._cond:
+                extra = (
+                    item.extra_args if item.extra_args is not None else self._extra_args
+                )
+            thumbnail = _thumbnail_from(info)
+            label = _format_label_from(info, extra)
+            if title is not None or thumbnail or label:
                 with self._cond:
-                    item.title = title
+                    if title is not None:
+                        item.title = title
+                    item.thumbnail = thumbnail or item.thumbnail
+                    item.format_label = label or item.format_label
                     self._emit(
                         {"type": "item", "id": item.id, "item": item.snapshot()}
                     )
@@ -1059,6 +1166,8 @@ class DownloadQueue:
         with self._cond:
             browser, cookie_file = self._cookies_browser, self._cookies_file
             limit = self._limit_rate
+            photo_mode, song_length = self._photo_mode, self._song_length
+            force = item.force
         has_cookies = bool(browser or cookie_file)
         try:
             config = media.write_config(self._gallery_config)
@@ -1083,9 +1192,11 @@ class DownloadQueue:
             title = plan.display_title
             if title is not None:
                 item.title = title
+            item.thumbnail = plan.thumbnail or item.thumbnail
+            item.format_label = plan.format_label or item.format_label
             item.files_done = 0
             # A song plus pictures also gives one mp4: it counts as a file.
-            mix_post = self._mix_post_id(item, plan)
+            mix_post = self._mix_post_id(item, plan, photo_mode)
             item.files_total = plan.total + (1 if mix_post else 0)
             self._emit({"type": "item", "id": item.id, "item": item.snapshot()})
             self._set_state(item, "downloading")
@@ -1095,44 +1206,55 @@ class DownloadQueue:
             directory.mkdir(parents=True, exist_ok=True)
         except OSError:
             return _UNKNOWN
-        opts = media.MediaOptions(
-            url=item.url,
-            directory=directory,
-            config_path=config,
-            archive_path=self._gallery_archive,
-            gallery_dl=str(binary),
-            limit_rate=limit,
-            cookies_browser=browser,
-            cookies_file=cookie_file,
-        )
-        try:
-            self._gallery_archive.parent.mkdir(parents=True, exist_ok=True)
-            handle = self._run_media(
-                opts,
-                lambda event: self._on_progress(item, event),
-                files_total=item.files_total,
+        owner = plan.owner or media.classify_media_url(item.url).username
+
+        def options(use_archive: bool) -> media.MediaOptions:
+            return media.MediaOptions(
+                url=item.url,
+                directory=directory,
+                config_path=config,
+                archive_path=self._gallery_archive,
+                gallery_dl=str(binary),
+                limit_rate=limit,
+                cookies_browser=browser,
+                cookies_file=cookie_file,
+                use_archive=use_archive,
             )
+
+        try:
+            run = self._media_run(item, options(not force))
         except OSError:
             return GALLERY_DL_MISSING
-        with self._cond:
-            item.handle = handle
-            stop_now = item.state in ("paused", "cancelled")
-        if stop_now:
-            handle.terminate()
-        handle.wait()
-        raw = handle.raw_log
-        returncode = handle.returncode
-        terminated = bool(getattr(handle, "terminated", False))
+        if run is None:
+            return None
+        raw, returncode, terminated, finished = run
+        if (
+            not force
+            and returncode == 0
+            and not terminated
+            and not finished
+            and not media.staged_files(directory)
+            and not media.all_present(self.output_dir, owner, plan)
+        ):
+            # gallery-dl's archive remembers files that are gone from the output
+            # folder: fetch them again, this once, without the archive.
+            with self._cond:
+                item.files_done = 0
+                item.percent = None
+                self._emit({"type": "item", "id": item.id, "item": item.snapshot()})
+            try:
+                run = self._media_run(item, options(False))
+            except OSError:
+                return GALLERY_DL_MISSING
+            if run is None:
+                return None
+            raw, returncode, terminated, finished = run
 
-        with self._cond:
-            item.handle = None
-            if item.state in ("paused", "cancelled"):
-                return None  # staged files stay; a resume moves them later
-
-        owner = plan.owner or media.classify_media_url(item.url).username
         if returncode == 0 and not terminated:
             # Brief 10B-2: cut the post's song, build the photo + song video.
-            if self._convert_media(item, plan, directory, owner, mix_post):
+            if self._convert_media(
+                item, plan, directory, owner, mix_post, photo_mode, song_length
+            ):
                 return None  # paused or cancelled while converting
         # Move whatever finished, even after a failure: a retry then only
         # fetches the files that are still missing (the archive skips the rest).
@@ -1142,7 +1264,6 @@ class DownloadQueue:
             with self._cond:
                 if item.state not in DOWNLOADING_STATES:
                     return None
-                finished = list(getattr(handle, "finished", ()))
                 if moved.moved or (finished and not moved.existing):
                     item.file_path = None if first is None else str(first)
                     item.percent = 100.0
@@ -1155,6 +1276,8 @@ class DownloadQueue:
                     # of that name was already in the output folder).
                     item.file_path = None if first is None else str(first)
                     item.error = ALREADY_DOWNLOADED
+                    if moved.existing or media.all_present(self.output_dir, owner, plan):
+                        item.note = ALREADY_SAVED_NOTE
                     self._set_state(item, "skipped", error=ALREADY_DOWNLOADED)
             return None
         if first is not None and moved.moved:
@@ -1162,13 +1285,47 @@ class DownloadQueue:
                 item.file_path = str(first)
         return explain_gallery(raw, item.url, has_cookies)
 
-    def _mix_post_id(self, item: QueueItem, plan: media.MediaPlan) -> str | None:
+    def _media_run(
+        self, item: QueueItem, opts: media.MediaOptions
+    ) -> tuple[str, int | None, bool, list[str]] | None:
+        """One gallery-dl run: ``(raw log, exit code, terminated, finished paths)``.
+
+        ``None`` when the item was paused or cancelled meanwhile (staged files
+        stay; a resume moves them later). Raises ``OSError`` when gallery-dl
+        cannot be started.
+        """
+        self._gallery_archive.parent.mkdir(parents=True, exist_ok=True)
+        handle = self._run_media(
+            opts,
+            lambda event: self._on_progress(item, event),
+            files_total=item.files_total,
+        )
+        with self._cond:
+            item.handle = handle
+            stop_now = item.state in ("paused", "cancelled")
+        if stop_now:
+            handle.terminate()
+        handle.wait()
+        raw = handle.raw_log
+        returncode = handle.returncode
+        terminated = bool(getattr(handle, "terminated", False))
+        with self._cond:
+            item.handle = None
+            if item.state in ("paused", "cancelled"):
+                return None
+        return raw, returncode, terminated, list(getattr(handle, "finished", ()))
+
+    def _mix_post_id(
+        self, item: QueueItem, plan: media.MediaPlan, photo_mode: str = "video"
+    ) -> str | None:
         """The post id for the ``[<id>_mix]`` name when a mix is expected, else ``None``.
 
         Expected: one post (an Instagram post / story or a TikTok photo post,
         not a story tray or highlight) with exactly one song and at least one
-        picture, and ffmpeg is installed.
+        picture, the "Photos, song and video" setting, and ffmpeg is installed.
         """
+        if photo_mode != "video":
+            return None
         parsed = media.classify_media_url(item.url)
         if parsed.kind not in (
             media.MediaUrlKind.POST,
@@ -1201,6 +1358,8 @@ class DownloadQueue:
         directory: Path,
         owner: str | None,
         mix_post: str | None,
+        photo_mode: str = "video",
+        song_length: str = "snippet",
     ) -> bool:
         """Song snippet + mix video in the staging folder; ``True`` = stop (paused/cancelled).
 
@@ -1235,6 +1394,9 @@ class DownloadQueue:
                 ffprobe=self._ffprobe,
                 job=job,
                 on_convert=converting,
+                make_video=photo_mode == "video",
+                keep_song=photo_mode != "photos",
+                cut_song=song_length != "full",
             )
         except Exception:  # an extra must never fail the download
             result = mix.MixResult(note=mix.MIX_FAILED_NOTE if mix_post else None)
@@ -1243,6 +1405,8 @@ class DownloadQueue:
             if item.state in ("paused", "cancelled"):
                 return True
             item.note = result.note
+            if result.removed_songs and item.files_total:
+                item.files_total = max(item.files_total - result.removed_songs, 0)
             if mix_post and result.video is None and item.files_total:
                 item.files_total -= 1  # the mp4 was not made (or already exists)
             elif not mix_post and result.video is not None:

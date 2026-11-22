@@ -67,7 +67,7 @@ from .thumbnail import ThumbnailCache
 from .widgets import (
     BrandMark, CountCards, EmptyState, QueueDelegate, RowHeightKeeper, action_icon,
     dialog_card, make_primary, make_quiet,
-    enter_animation, progress_ease,
+    enter_animation, open_finished, progress_ease, show_finished,
 )
 
 __all__ = ["MainWindow", "ProgressAnnouncer", "SHORTCUTS", "extract_urls"]
@@ -1239,27 +1239,19 @@ class MainWindow(QMainWindow):
                 self.queue.resume(snap["id"])
 
     def open_folder(self) -> None:
+        """"Show in folder": select the finished file (the first one of a post) in the file manager."""
         snap = self.selected_snapshot()
         if snap is None or snap["state"] != "done":
             return
-        folder = self.queue.output_dir
-        file_path = snap.get("file_path")
-        if file_path:
-            parent = Path(file_path).parent
-            if parent.is_dir():
-                folder = parent
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+        show_finished(snap.get("file_path"), self.queue.output_dir)
 
     def launch_selected(self) -> None:
-        """Open the finished file with the desktop's default app (the folder if it is gone)."""
+        """"Open": the file with the desktop's default app; a multi-file post opens its folder."""
         snap = self.selected_snapshot()
         if snap is None or snap["state"] != "done":
             return
-        file_path = snap.get("file_path")
-        if file_path and Path(file_path).is_file():
-            QDesktopServices.openUrl(QUrl.fromLocalFile(file_path))
-        else:
-            self.open_folder()
+        total = (snap.get("progress") or {}).get("files_total")
+        open_finished(snap.get("file_path"), total, self.queue.output_dir)
 
     def copy_link(self) -> None:
         snap = self.selected_snapshot()

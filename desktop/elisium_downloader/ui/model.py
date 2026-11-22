@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
+from elisium_downloader.engine import media as _media
 from PySide6.QtCore import (
     QAbstractTableModel,
     QModelIndex,
@@ -31,7 +32,10 @@ __all__ = [
     "format_speed",
     "format_eta",
     "site_name",
+    "LOOKING_UP_TITLE",
 ]
+
+LOOKING_UP_TITLE = "Looking up the post..."
 
 COLUMNS = ("Title", "Status", "Progress", "Speed", "ETA", "Size")
 COL_TITLE, COL_STATUS, COL_PROGRESS, COL_SPEED, COL_ETA, COL_SIZE = range(6)
@@ -186,6 +190,12 @@ def site_name(url: str | None) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
+def _is_post_link(url: str | None) -> bool:
+    """True for a link the media engine may handle (photo post, story, highlight, slideshow)."""
+    return _media.classify_media_url(url).kind not in (
+        _media.MediaUrlKind.UNKNOWN, _media.MediaUrlKind.REEL)
+
+
 def filter_of(state: str) -> str | None:
     """The count card a state is counted under (``None``: only in All)."""
     for key, states in _FILTER_STATES.items():
@@ -219,10 +229,11 @@ def describe_row(row: dict[str, Any]) -> RowText:
     progress = row.get("progress") or {}
     size = format_bytes(_size_of(row))
     files_total = progress.get("files_total")
-    meta_parts = [site_name(row.get("url"))]
+    # "YouTube · 1080p MP4 · 648.5 MB", "Instagram · 6 photos + song · 3 of 7 files"
+    meta_parts = [site_name(row.get("url")), row.get("format_label") or ""]
     if files_total:
         done = progress.get("files_done") or 0
-        meta_parts.append(f"{files_total} files" if state == "done" else f"{done} of {files_total} files")
+        meta_parts.append(f"{files_total} files" if state in ("done", "skipped") else f"{done} of {files_total} files")
     elif size:
         meta_parts.append(size)
     meta = " · ".join(p for p in meta_parts if p)
@@ -371,7 +382,12 @@ class DownloadModel(QAbstractTableModel):
     # -- cell helpers ----------------------------------------------------
     @staticmethod
     def title_of(row: dict[str, Any]) -> str:
-        return row.get("title") or row.get("url") or ""
+        title = row.get("title")
+        if title:
+            return title
+        if row.get("state") in ("queued", "probing") and _is_post_link(row.get("url")):
+            return LOOKING_UP_TITLE  # a photo post, story tray or slideshow: the probe names it
+        return row.get("url") or ""
 
     @staticmethod
     def percent_of(row: dict[str, Any]) -> float | None:

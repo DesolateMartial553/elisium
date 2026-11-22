@@ -11,7 +11,13 @@ from pathlib import Path
 
 from elisium_downloader.engine import paths
 from elisium_downloader.engine.presets import DEFAULT_ID, PRESETS, get
-from elisium_downloader.engine.queue import DEFAULT_CONCURRENCY, MAX_CONCURRENCY, DownloadQueue
+from elisium_downloader.engine.queue import (
+    DEFAULT_CONCURRENCY,
+    MAX_CONCURRENCY,
+    PHOTO_MODES,
+    SONG_LENGTHS,
+    DownloadQueue,
+)
 
 __all__ = [
     "COOKIE_BROWSERS",
@@ -77,6 +83,11 @@ class Settings:
     # cookies.txt file. Browser wins when both are set.
     cookies_browser: str | None = None
     cookies_file: str | None = None
+    # Photos and music (brief 10C): "video" = photos, song and video; "song" =
+    # photos and song only; "photos" = photos only. "snippet" = the part the
+    # post plays; "full" = the whole song.
+    photo_mode: str = "video"
+    song_length: str = "snippet"
 
     def __post_init__(self) -> None:
         self.validate()
@@ -99,6 +110,10 @@ class Settings:
             self.reduce_motion = False
         self.cookies_browser = valid_cookie_browser(self.cookies_browser)
         self.cookies_file = valid_cookies_file(self.cookies_file)
+        if self.photo_mode not in PHOTO_MODES:
+            self.photo_mode = "video"
+        if self.song_length not in SONG_LENGTHS:
+            self.song_length = "snippet"
 
 
 def default_path() -> Path:
@@ -145,5 +160,7 @@ def apply(settings: Settings, queue: DownloadQueue) -> None:
     queue.set_format_selector(preset.format_selector)
     queue.set_extra_args(preset.extra_args)
     queue.set_cookies(settings.cookies_browser, settings.cookies_file)
+    queue.set_photo_mode(settings.photo_mode)
+    queue.set_song_length(settings.song_length)
 
 

@@ -46,7 +46,10 @@ from elisium_downloader.engine.queue import DownloadQueue
 from . import theme
 from .bridge import QueueBridge
 from .model import STATUS_TEXT, format_bytes, site_name
-from .widgets import EmptyState, HistoryDelegate, RowHeightKeeper, make_primary, make_quiet
+from .widgets import (
+    EmptyState, HistoryDelegate, RowHeightKeeper, make_primary, make_quiet, open_finished,
+    show_finished,
+)
 
 __all__ = ["HistoryModel", "HistoryPage", "FILE_MISSING_TEXT", "ALL_SITES", "day_heading"]
 
@@ -511,21 +514,24 @@ class HistoryPage(QWidget):
 
     # -- actions ---------------------------------------------------------
     def open_file(self) -> None:
+        """"Open": the file, or the post's folder for a post of several files."""
         row = self.selected_row()
         if row and row.get("file_path") and not row["file_missing"] and row["state"] == "done":
-            QDesktopServices.openUrl(QUrl.fromLocalFile(row["file_path"]))
+            open_finished(row["file_path"], row.get("files_total"), self.queue.output_dir)
 
     def open_folder(self) -> None:
+        """"Show in folder": the (first) file selected in the file manager."""
         row = self.selected_row()
         if row and row.get("file_path") and not row["file_missing"] and row["state"] == "done":
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(row["file_path"]).parent)))
+            show_finished(row["file_path"], self.queue.output_dir)
 
     def download_again(self) -> None:
+        """Add the link again; a photo post comes back even if its files were deleted."""
         row = self.selected_row()
         if row is None:
             return
         try:
-            self.queue.add(row["url"])
+            self.queue.add(row["url"], force=True)
         except ValueError:
             self._say("That link cannot be downloaded")
             return

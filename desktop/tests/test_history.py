@@ -37,7 +37,8 @@ def test_schema_matches_the_spec(tmp_path: Path) -> None:
     History(path).close()
     with sqlite3.connect(path) as conn:
         rows = conn.execute("PRAGMA table_info(downloads)").fetchall()
-    assert [row[1] for row in rows] == COLUMNS
+    # The spec's columns first, then the two brief 10C additions (a note and a file count).
+    assert [row[1] for row in rows] == COLUMNS + ["note", "files_total"]
 
 
 def test_database_file_and_parent_directory_are_created(tmp_path: Path) -> None:
@@ -274,5 +275,39 @@ def test_in_memory_database_works() -> None:
     try:
         record_id = db.add(URL, title="Memory only")
         assert db.get(record_id)["title"] == "Memory only"
+    finally:
+        db.close()
+
+
+# -- brief 10C: the note and the file count ----------------------------------
+def test_note_and_files_total_are_kept_and_cleared(history: History) -> None:
+    record_id = history.add(URL)
+    assert history.get(record_id)["note"] is None
+    history.update_state(record_id, "done", note="Kept the full song: x", files_total=7)
+    row = history.get(record_id)
+    assert row["note"] == "Kept the full song: x" and row["files_total"] == 7
+    history.update_state(record_id, "queued", clear_note=True)
+    assert history.get(record_id)["note"] is None
+    assert history.get(record_id)["files_total"] == 7
+
+
+def test_old_history_file_without_the_new_columns_still_opens(tmp_path: Path) -> None:
+    path = tmp_path / "old.sqlite"
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "CREATE TABLE downloads (id INTEGER PRIMARY KEY, url TEXT NOT NULL, video_key TEXT,"
+            " title TEXT, state TEXT NOT NULL, error_code TEXT, error_message TEXT, file_path TEXT,"
+            " created_at TEXT NOT NULL, finished_at TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO downloads (url, state, created_at) VALUES (?, 'done', '2026-01-01T00:00:00+00:00')",
+            (URL,),
+        )
+    db = History(path)
+    try:
+        (row,) = db.recent(5)
+        assert row["note"] is None and row["files_total"] is None
+        db.update_state(row["id"], "done", note="Already saved")
+        assert db.get(row["id"])["note"] == "Already saved"
     finally:
         db.close()

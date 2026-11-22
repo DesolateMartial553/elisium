@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import (
@@ -20,11 +21,13 @@ from PySide6.QtCore import (
     QRectF,
     QSize,
     Qt,
+    QUrl,
     QVariantAnimation,
     Signal,
 )
 from PySide6.QtGui import (
     QColor,
+    QDesktopServices,
     QFont,
     QFontInfo,
     QFontMetrics,
@@ -560,9 +563,55 @@ class CountCards(QWidget):
             card.set_count(int(counts.get(key, 0)))
 
 
+# -- opening finished files ---------------------------------------------------------------
+def is_multi_file(files_total: Any) -> bool:
+    """True for a finished post of several files (photos, a song, a video)."""
+    return isinstance(files_total, int) and not isinstance(files_total, bool) and files_total > 1
+
+
+def _show_item(path: Path) -> bool:
+    """Ask the file manager (``org.freedesktop.FileManager1``) to select *path*; ``False`` if it cannot."""
+    try:
+        from PySide6.QtDBus import QDBusConnection, QDBusInterface, QDBusMessage
+
+        bus = QDBusConnection.sessionBus()
+        if not bus.isConnected():
+            return False
+        iface = QDBusInterface("org.freedesktop.FileManager1", "/org/freedesktop/FileManager1",
+                               "org.freedesktop.FileManager1", bus)
+        if not iface.isValid():
+            return False
+        reply = iface.call("ShowItems", [QUrl.fromLocalFile(str(path)).toString()], "")
+        return reply.type() != QDBusMessage.MessageType.ErrorMessage
+    except Exception:  # noqa: BLE001 - no bus, no QtDBus: the folder opens instead
+        return False
+
+
+def open_finished(file_path: str | None, files_total: Any, fallback: Path) -> None:
+    """"Open": the file for a single file, the post's folder for a multi-file post.
+
+    A file that is gone opens its folder (else *fallback*, the download folder).
+    """
+    path = Path(file_path) if file_path else None
+    if path is not None and path.is_file() and not is_multi_file(files_total):
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+        return
+    folder = path.parent if path is not None and path.parent.is_dir() else fallback
+    QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+
+def show_finished(file_path: str | None, fallback: Path) -> None:
+    """"Show in folder": the (first) file selected in the file manager, else its folder."""
+    path = Path(file_path) if file_path else None
+    if path is not None and path.is_file() and _show_item(path):
+        return
+    folder = path.parent if path is not None and path.parent.is_dir() else fallback
+    QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+
 # -- download rows ---------------------------------------------------------------------------
 def _title(row: dict[str, Any]) -> str:
-    return row.get("title") or row.get("url") or ""
+    return DownloadModel.title_of(row)
 
 
 @dataclass
@@ -836,6 +885,7 @@ class HistoryGeometry:
     thumb: QRectF
     title: QRectF
     meta: QRectF
+    note: QRectF | None
     state: QRectF
     when: QRectF
     links: list[tuple[str, QRectF]]   # ("open" | "folder" | "again", hit rectangle), left to right
@@ -934,10 +984,12 @@ class HistoryDelegate(_CardDelegate):
         text_x = thumb.right() + 16 * u
         text_right = max(text_x + 40 * u, left - 16 * u)
         th, mh = fm["title"].height(), fm["meta"].height()
-        y = card.top() + (card.height() - (th + 2 * u + mh)) / 2
+        has_note = bool(row.get("note"))
+        y = card.top() + (card.height() - (th + 2 * u + mh + (2 * u + mh if has_note else 0))) / 2
         title = QRectF(text_x, y, text_right - text_x, th)
         meta = QRectF(text_x, y + th + 2 * u, text_right - text_x, mh)
-        return HistoryGeometry(card, heading_rect, thumb, title, meta, state, when, links, dots)
+        note = QRectF(text_x, meta.bottom() + 2 * u, text_right - text_x, mh) if has_note else None
+        return HistoryGeometry(card, heading_rect, thumb, title, meta, note, state, when, links, dots)
 
     def link_at(self, rect: Any, row: dict[str, Any], base: QFont, heading: bool, pos: Any) -> str | None:
         """The link under *pos* (a QPointF/QPoint inside the item *rect*), or ``None``."""
@@ -994,7 +1046,11 @@ class HistoryDelegate(_CardDelegate):
         # Meta: "Site · size" in faint; a failed row adds its plain reason in negative.
         painter.setFont(f["meta"])
         site = row.get("site") or site_name(row["url"])
-        bits = [site] + ([row["size_text"]] if row.get("size_text") else [])
+        bits = [site]
+        if (row.get("files_total") or 0) > 1:  # the size on disk is only the first file's
+            bits.append(f"{row['files_total']} files")
+        elif row.get("size_text"):
+            bits.append(row["size_text"])
         meta = " · ".join(bits)
         painter.setPen(state_text_colour(p, "faint", selected))
         painter.drawText(geo.meta, left, fm["meta"].elidedText(
@@ -1012,6 +1068,11 @@ class HistoryDelegate(_CardDelegate):
                 painter.drawText(QRectF(geo.meta.left() + used - fm["meta"].horizontalAdvance("· "),
                                         geo.meta.top(), fm["meta"].horizontalAdvance("· "),
                                         geo.meta.height()), left, "·")
+
+        if geo.note is not None:  # the item's remark, kept from the download ("Kept the full song...")
+            painter.setPen(state_text_colour(p, "muted", selected))
+            painter.drawText(geo.note, left, fm["meta"].elidedText(
+                row["note"], Qt.TextElideMode.ElideRight, int(geo.note.width())))
 
         # Right column: the state word in colour, the time in faint, then the links.
         missing = bool(row.get("file_missing"))

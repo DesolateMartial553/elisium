@@ -69,6 +69,7 @@ __all__ = [
     "config_dict",
     "filename_format_for",
     "find_gallery_dl",
+    "all_present",
     "finalize",
     "item_directory",
     "mix_key",
@@ -77,6 +78,7 @@ __all__ = [
     "route_for",
     "run",
     "safe_folder_name",
+    "staged_files",
     "write_config",
 ]
 
@@ -319,6 +321,9 @@ class MediaOptions:
     cookies_browser: str | None = None
     cookies_file: str | os.PathLike[str] | None = None
     extra_args: Sequence[str] = ()
+    # False for "Download again anyway": gallery-dl's SQLite archive remembers a
+    # post even after its files were deleted, so that run leaves it out.
+    use_archive: bool = True
 
     def __post_init__(self) -> None:
         if not isinstance(self.url, str) or not self.url.strip():
@@ -367,11 +372,11 @@ def build_command(opts: MediaOptions) -> list[str]:
             str(Path(opts.directory).expanduser()),
             "-f",
             opts.filename_format or filename_format_for(opts.url),
-            "--download-archive",
-            str(Path(opts.archive_path).expanduser()),
-            "--write-metadata",
         ]
     )
+    if opts.use_archive:
+        argv.extend(["--download-archive", str(Path(opts.archive_path).expanduser())])
+    argv.append("--write-metadata")
     if opts.limit_rate:
         argv.extend(["--limit-rate", str(opts.limit_rate)])
     argv.extend(runner._cookie_args(opts.cookies_browser, opts.cookies_file))
@@ -406,10 +411,27 @@ class MediaPlan:
     shortcode: str | None = None
     date: str | None = None
     title: str | None = None
+    # The first picture's link (or the post's cover): shown on the row, display only.
+    thumbnail: str | None = None
 
     @property
     def total(self) -> int:
         return len(self.files)
+
+    @property
+    def format_label(self) -> str | None:
+        """What the post holds, in plain words: ``6 photos + song``, ``2 videos``."""
+        photos = sum(1 for f in self.files if f.kind == "image")
+        videos = sum(1 for f in self.files if f.kind == "video")
+        songs = sum(1 for f in self.files if f.is_audio)
+        parts = []
+        if photos:
+            parts.append(f"{photos} photo{'s' if photos != 1 else ''}")
+        if videos:
+            parts.append(f"{videos} video{'s' if videos != 1 else ''}")
+        if songs:
+            parts.append("song" if songs == 1 else f"{songs} songs")
+        return " + ".join(parts) or None
 
     @property
     def display_title(self) -> str | None:
@@ -550,6 +572,7 @@ def parse_probe(text: str, url: str | None = None) -> MediaPlan:
     dir_meta: list[Mapping[str, Any]] = []
     file_meta: list[Mapping[str, Any]] = []
     files: list[PlannedFile] = []
+    thumbnail: str | None = None
     for message in _messages(text or ""):
         kind = message[0]
         if kind == 2 and len(message) >= 2 and isinstance(message[1], Mapping):
@@ -573,7 +596,15 @@ def parse_probe(text: str, url: str | None = None) -> MediaPlan:
             ident = _string(meta.get("media_id")) or _string(meta.get("id")) or ""
             if category == "tiktok":
                 ident = f"{ident}_{num}" if ident else ""
-            files.append(PlannedFile(_kind(ext, meta), ident, num, ext))
+            planned = PlannedFile(_kind(ext, meta), ident, num, ext)
+            files.append(planned)
+            if (
+                thumbnail is None
+                and planned.kind == "image"
+                and isinstance(file_url, str)
+                and file_url.lower().startswith(("http://", "https://"))
+            ):
+                thumbnail = file_url
     both = list(dir_meta) + list(file_meta)
     site = _first(both, "category") or (site_kind(url) if isinstance(url, str) else None)
     return MediaPlan(
@@ -584,7 +615,16 @@ def parse_probe(text: str, url: str | None = None) -> MediaPlan:
         shortcode=_first(both, "post_shortcode", "shortcode"),
         date=_first(both, "post_date", "date"),
         title=_caption_title(both),
+        thumbnail=thumbnail or _cover(both),
     )
+
+
+def _cover(meta_list: Sequence[Mapping[str, Any]]) -> str | None:
+    """A post's own cover picture, when no file is a picture (a video-only post)."""
+    found = _first(meta_list, "thumbnail", "display_url", "cover")
+    if found and found.lower().startswith(("http://", "https://")):
+        return found
+    return None
 
 
 def _text(value: Any) -> str:
@@ -648,6 +688,44 @@ def probe(
         elif result.returncode == 0:
             info = NO_MEDIA_FILES
     raise MediaProbeError(info, raw)
+
+
+# -- what is already saved ----------------------------------------------------
+def _is_meta(name: str) -> bool:
+    return name.lower().endswith(_NOT_MEDIA_SUFFIXES)
+
+
+def staged_files(directory: str | os.PathLike[str]) -> list[Path]:
+    """Finished media files waiting in a staging folder (metadata and ``.part`` left out)."""
+    try:
+        return [
+            Path(e.path)
+            for e in os.scandir(Path(directory).expanduser())
+            if e.is_file(follow_symlinks=False) and not _is_meta(e.name)
+        ]
+    except OSError:
+        return []
+
+
+def all_present(
+    output_root: str | os.PathLike[str], owner: str | None, plan: MediaPlan
+) -> bool:
+    """True when every picture and clip of *plan* is already in ``<output>/<owner>/``.
+
+    Files carry ``[<media id>]`` in their name. The song is left out of the
+    check: once cut, its name no longer holds the id. A plan with nothing to
+    look for, or a file without an id, counts as not present.
+    """
+    wanted = [f for f in plan.files if not f.is_audio]
+    if not wanted or any(not f.media_id for f in wanted):
+        return False
+    folder = safe_folder_name(owner)
+    root = Path(output_root).expanduser()
+    try:
+        names = [e.name for e in os.scandir(root / folder if folder else root) if e.is_file()]
+    except OSError:
+        return False
+    return all(any(f"[{f.media_id}]" in name for name in names) for f in wanted)
 
 
 # -- running ---------------------------------------------------------------

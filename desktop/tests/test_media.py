@@ -40,12 +40,15 @@ def write_fake_gallery(
     download_code: int = 0,
     sleep_after_first: float = 0.0,
     name: str = "fake-gallery-dl",
+    bracket_ids: bool = False,
 ) -> Path:
     """A fake gallery-dl: logs argv, answers ``-j`` from a fixture, "downloads" files.
 
     The download half creates one file (plus ``.json`` metadata) per ``[3, ...]``
     message in ``-D``, prints its path (``# path`` when the fake archive already
-    holds it) and appends to the file given as ``--download-archive``.
+    holds it) and appends to the file given as ``--download-archive``. Without
+    that flag (brief 10C, "Download again anyway") nothing is skipped or recorded.
+    *bracket_ids* names files like the real format (``who [id] num.ext``).
     """
     text = probe_stdout if probe_stdout is not None else (
         fixture_text(fixture) if fixture else ""
@@ -62,8 +65,8 @@ def write_fake_gallery(
         "    sys.stdout.write(TEXT)",
         f"    sys.exit({probe_code})",
         "directory = argv[argv.index('-D') + 1]",
-        "archive = argv[argv.index('--download-archive') + 1]",
-        "seen = set(open(archive).read().split()) if os.path.exists(archive) else set()",
+        "archive = argv[argv.index('--download-archive') + 1] if '--download-archive' in argv else None",
+        "seen = set(open(archive).read().split()) if archive and os.path.exists(archive) else set()",
         "messages = json.loads(TEXT) if TEXT.strip() else []",
         "count = 0",
         "for message in messages:",
@@ -73,15 +76,18 @@ def write_fake_gallery(
         "    who = meta.get('username') or meta['author']['uniqueId']",
         "    ident = str(meta.get('media_id') or meta['id'])",
         "    key = meta['category'] + ':' + ident + ':' + str(meta['num'])",
-        "    path = os.path.join(directory, f\"{who} {ident} {meta['num']}.{meta['extension']}\")",
+        f"    bracket = {bracket_ids!r}",
+        "    label = f'[{ident}]' if bracket else ident",
+        "    path = os.path.join(directory, f\"{who} {label} {meta['num']}.{meta['extension']}\")",
         "    if key in seen:",
         "        print('# ' + path, flush=True)",
         "        continue",
         "    os.makedirs(directory, exist_ok=True)",
         "    open(path, 'w').write('data ' + key)",
         "    open(path + '.json', 'w').write(json.dumps(meta))",
-        "    with open(archive, 'a') as fh:",
-        "        fh.write(key + '\\n')",
+        "    if archive:",
+        "        with open(archive, 'a') as fh:",
+        "            fh.write(key + '\\n')",
         "    print(path, flush=True)",
         "    count += 1",
         f"    if {sleep_after_first!r} and count == 1:",
