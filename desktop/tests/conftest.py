@@ -35,6 +35,18 @@ def _never_run_the_real_gallery_dl(monkeypatch):
     monkeypatch.setattr(media, "find_gallery_dl", lambda: None)
 
 
+@pytest.fixture(autouse=True)
+def _never_run_the_real_ffmpeg(monkeypatch):
+    """No test may run the real ffmpeg/ffprobe (brief 10B-2).
+
+    Tests that need the mix step pass fake binaries to the queue explicitly.
+    """
+    from elisium_downloader.engine import mix
+
+    monkeypatch.setattr(mix, "find_ffmpeg", lambda: None)
+    monkeypatch.setattr(mix, "find_ffprobe", lambda: None)
+
+
 @pytest.fixture(scope="session")
 def qapp():
     from PySide6.QtWidgets import QApplication

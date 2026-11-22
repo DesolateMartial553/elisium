@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
-from . import media, runner
+from . import media, mix, runner
 from .archive import Archive, _file_exists, reconcile
 from .errors import (
     GALLERY_DL_MISSING,
@@ -227,6 +227,9 @@ class QueueItem:
     # Media engine (gallery-dl) items count files instead of bytes.
     files_done: int | None = None
     files_total: int | None = None
+    # A short plain-language remark on a finished item (brief 10B-2), e.g.
+    # "Kept the full song: ...". Not stored in the history.
+    note: str | None = None
 
     def snapshot(self) -> dict[str, Any]:
         """A plain-dict view for the UI and for events."""
@@ -239,6 +242,7 @@ class QueueItem:
             "state": self.state,
             "title": self.title,
             "file_path": self.file_path,
+            "note": self.note,
             "attempts": self.attempts,
             "error": None
             if self.error is None
@@ -295,6 +299,8 @@ class DownloadQueue:
         run_media: Callable[..., Any] = media.run,
         gallery_config: str | os.PathLike[str] | None = None,
         gallery_archive: str | os.PathLike[str] | None = None,
+        ffmpeg: str | None = None,
+        ffprobe: str | None = None,
     ) -> None:
         self.history = history
         self.archive = archive
@@ -328,6 +334,9 @@ class DownloadQueue:
             if gallery_archive is not None
             else self.archive.path.parent / "gallery-archive.sqlite3"
         ).expanduser()
+        # Brief 10B-2: song snippet + photo/song video; ``None`` = look up on PATH.
+        self._ffmpeg = ffmpeg
+        self._ffprobe = ffprobe
         self._concurrency = _check_concurrency(concurrency)
 
         self._items: dict[int, QueueItem] = {}
@@ -803,6 +812,7 @@ class DownloadQueue:
             item.eta = None
             item.files_done = None
             item.files_total = None
+            item.note = None
             self._set_state(item, "probing")
 
         route = media.route_for(item.url)
@@ -1074,7 +1084,9 @@ class DownloadQueue:
             if title is not None:
                 item.title = title
             item.files_done = 0
-            item.files_total = plan.total
+            # A song plus pictures also gives one mp4: it counts as a file.
+            mix_post = self._mix_post_id(item, plan)
+            item.files_total = plan.total + (1 if mix_post else 0)
             self._emit({"type": "item", "id": item.id, "item": item.snapshot()})
             self._set_state(item, "downloading")
 
@@ -1098,7 +1110,7 @@ class DownloadQueue:
             handle = self._run_media(
                 opts,
                 lambda event: self._on_progress(item, event),
-                files_total=plan.total,
+                files_total=item.files_total,
             )
         except OSError:
             return GALLERY_DL_MISSING
@@ -1117,9 +1129,13 @@ class DownloadQueue:
             if item.state in ("paused", "cancelled"):
                 return None  # staged files stay; a resume moves them later
 
+        owner = plan.owner or media.classify_media_url(item.url).username
+        if returncode == 0 and not terminated:
+            # Brief 10B-2: cut the post's song, build the photo + song video.
+            if self._convert_media(item, plan, directory, owner, mix_post):
+                return None  # paused or cancelled while converting
         # Move whatever finished, even after a failure: a retry then only
         # fetches the files that are still missing (the archive skips the rest).
-        owner = plan.owner or media.classify_media_url(item.url).username
         moved = media.finalize(directory, self.output_dir, owner)
         first = moved.first
         if returncode == 0 and not terminated:
@@ -1130,7 +1146,9 @@ class DownloadQueue:
                 if moved.moved or (finished and not moved.existing):
                     item.file_path = None if first is None else str(first)
                     item.percent = 100.0
-                    item.files_done = plan.total
+                    item.files_done = (
+                        item.files_total if item.files_total is not None else plan.total
+                    )
                     self._set_state(item, "done", file_path=item.file_path)
                 else:
                     # Nothing new: every file was skipped (archive, or a file
@@ -1143,6 +1161,93 @@ class DownloadQueue:
             with self._cond:
                 item.file_path = str(first)
         return explain_gallery(raw, item.url, has_cookies)
+
+    def _mix_post_id(self, item: QueueItem, plan: media.MediaPlan) -> str | None:
+        """The post id for the ``[<id>_mix]`` name when a mix is expected, else ``None``.
+
+        Expected: one post (an Instagram post / story or a TikTok photo post,
+        not a story tray or highlight) with exactly one song and at least one
+        picture, and ffmpeg is installed.
+        """
+        parsed = media.classify_media_url(item.url)
+        if parsed.kind not in (
+            media.MediaUrlKind.POST,
+            media.MediaUrlKind.STORY_ITEM,
+            media.MediaUrlKind.TIKTOK_PHOTO,
+        ):
+            return None
+        audio = sum(1 for f in plan.files if f.is_audio)
+        if audio != 1 or plan.total - audio < 1:
+            return None
+        if not (self._ffmpeg or mix.find_ffmpeg()):
+            return None
+        return self._post_id(item, plan)
+
+    @staticmethod
+    def _post_id(item: QueueItem, plan: media.MediaPlan) -> str | None:
+        parsed = media.classify_media_url(item.url)
+        return (
+            plan.shortcode
+            or plan.post_id
+            or parsed.shortcode
+            or parsed.tiktok_id
+            or parsed.story_id
+        )
+
+    def _convert_media(
+        self,
+        item: QueueItem,
+        plan: media.MediaPlan,
+        directory: Path,
+        owner: str | None,
+        mix_post: str | None,
+    ) -> bool:
+        """Song snippet + mix video in the staging folder; ``True`` = stop (paused/cancelled).
+
+        Never fails the item: problems become :attr:`QueueItem.note`.
+        """
+        post_id = mix_post or self._post_id(item, plan)
+        parsed = media.classify_media_url(item.url)
+        if post_id is None or parsed.kind not in (
+            media.MediaUrlKind.POST,
+            media.MediaUrlKind.STORY_ITEM,
+            media.MediaUrlKind.TIKTOK_PHOTO,
+        ):
+            return False
+        folder = media.safe_folder_name(owner)
+        existing = self.output_dir / folder if folder else self.output_dir
+        job = mix.MixJob()
+
+        def converting() -> None:
+            with self._cond:
+                if item.state in DOWNLOADING_STATES:
+                    item.handle = job
+                    item.stage = "converting"
+                    self._set_state(item, "converting")
+
+        try:
+            result = mix.process_staging(
+                directory,
+                post_id=post_id,
+                site=plan.site or parsed.site,
+                existing_dir=existing,
+                ffmpeg=self._ffmpeg,
+                ffprobe=self._ffprobe,
+                job=job,
+                on_convert=converting,
+            )
+        except Exception:  # an extra must never fail the download
+            result = mix.MixResult(note=mix.MIX_FAILED_NOTE if mix_post else None)
+        with self._cond:
+            item.handle = None
+            if item.state in ("paused", "cancelled"):
+                return True
+            item.note = result.note
+            if mix_post and result.video is None and item.files_total:
+                item.files_total -= 1  # the mp4 was not made (or already exists)
+            elif not mix_post and result.video is not None:
+                item.files_total = (item.files_total or plan.total) + 1
+        return False
 
     @staticmethod
     def _read_path_file(path_file: Path) -> str | None:
