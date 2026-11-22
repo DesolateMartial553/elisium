@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
@@ -33,9 +34,20 @@ __all__ = [
     "format_eta",
     "site_name",
     "LOOKING_UP_TITLE",
+    "STALL_AFTER",
+    "STALL_REASONS",
+    "host_title",
+    "stall_reason",
 ]
 
 LOOKING_UP_TITLE = "Looking up the post..."
+# Brief 12C: after this many quiet seconds a row that has not started says why.
+STALL_AFTER = 10.0
+STALL_REASONS = {
+    "signing_in": "Signing in",
+    "network": "Waiting for the network",
+    "rate_limited": "Rate limited, waiting",
+}
 
 COLUMNS = ("Title", "Status", "Progress", "Speed", "ETA", "Size")
 COL_TITLE, COL_STATUS, COL_PROGRESS, COL_SPEED, COL_ETA, COL_SIZE = range(6)
@@ -190,6 +202,21 @@ def site_name(url: str | None) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
+def host_title(url: str | None) -> str:
+    """The link's host (``youtube.com``) as the stand-in title of a row not looked up yet."""
+    host = (urlsplit(url or "").hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return host or (url or "")
+
+
+def stall_reason(hint: str | None, silent_for: float) -> str | None:
+    """The reason to show next to "Starting..." once a row was quiet for ``STALL_AFTER`` seconds."""
+    if silent_for < STALL_AFTER:
+        return None
+    return STALL_REASONS.get(hint or "")
+
+
 def _is_post_link(url: str | None) -> bool:
     """True for a link the media engine may handle (photo post, story, highlight, slideshow)."""
     return _media.classify_media_url(url).kind not in (
@@ -223,9 +250,16 @@ def _size_of(row: dict[str, Any]) -> float | None:
     return progress.get("total_bytes") or progress.get("downloaded_bytes")
 
 
-def describe_row(row: dict[str, Any]) -> RowText:
-    """Texts, tones and bar kind for one queue snapshot (states as in DESIGN.md "Row states")."""
+def describe_row(row: dict[str, Any], now: float | None = None) -> RowText:
+    """Texts, tones and bar kind for one queue snapshot (states as in DESIGN.md "Row states").
+
+    *now* (``time.monotonic()``) with the model's ``quiet_since`` stamp says how long the row
+    has been silent, for the "Starting..." reason (brief 12C).
+    """
     state = row["state"]
+    since = row.get("quiet_since")
+    silent = 0.0 if since is None else max(0.0, (time.monotonic() if now is None else now) - since)
+    reason = stall_reason(row.get("wait_hint"), silent)
     progress = row.get("progress") or {}
     size = format_bytes(_size_of(row))
     files_total = progress.get("files_total")
@@ -245,6 +279,8 @@ def describe_row(row: dict[str, Any]) -> RowText:
                             f"{eta_text(progress.get('eta'))} left" if progress.get("eta") is not None else "")
                 if t and t != " left"]
         sub = " · ".join(bits) or {"merging": "Merging", "converting": "Converting"}.get(state, "Starting")
+        if not bits and state == "downloading" and silent >= STALL_AFTER:
+            sub = f"Starting... {reason}" if reason else "Starting..."
         return RowText(meta, pct or STATE_WORD[state], bool(pct), sub, "muted", "hue", None, note)
     if state == "paused":
         total, got = progress.get("total_bytes"), progress.get("downloaded_bytes")
@@ -252,9 +288,11 @@ def describe_row(row: dict[str, Any]) -> RowText:
         sub = f"Paused · {to_go} to go" if to_go else "Paused"
         return RowText(meta, pct or "Paused", bool(pct), sub, "muted", "faint" if pct else None, None, note)
     if state == "queued":
-        return RowText(meta, "Waiting", False, size or "Starts next", "faint", None, None, note)
+        wait = STALL_REASONS["rate_limited"] if row.get("wait_hint") == "rate_limited" else ""
+        return RowText(meta, "Waiting", False, wait or size or "Starts next", "faint", None, None, note)
     if state == "probing":
-        return RowText(meta, "Checking", False, "Looking at the link", "faint", None, None, note)
+        look = f"Starting... {reason}" if reason else "Looking at the link"
+        return RowText(meta, "Checking", False, look, "faint", None, None, note)
     if state == "done":
         return RowText(meta, "Done", False, "Open · Show in folder", "positive", None, None, note)
     if state == "failed":
@@ -335,14 +373,20 @@ class DownloadModel(QAbstractTableModel):
         """Add the item, or replace the row it already has."""
         item_id = snapshot["id"]
         row = self._index.get(item_id)
+        fresh = dict(snapshot)
+        now = time.monotonic()
+        fresh["quiet_since"] = now
         if row is None:
             position = len(self._rows)
             self.beginInsertRows(QModelIndex(), position, position)
-            self._rows.append(dict(snapshot))
+            self._rows.append(fresh)
             self._index[item_id] = position
             self.endInsertRows()
             return
-        self._rows[row] = dict(snapshot)
+        old = self._rows[row]
+        if old.get("state") == fresh.get("state") and old.get("progress") == fresh.get("progress"):
+            fresh["quiet_since"] = old.get("quiet_since", now)  # nothing moved: still quiet
+        self._rows[row] = fresh
         self.dataChanged.emit(
             self.index(row, 0), self.index(row, len(COLUMNS) - 1)
         )
@@ -387,6 +431,8 @@ class DownloadModel(QAbstractTableModel):
             return title
         if row.get("state") in ("queued", "probing") and _is_post_link(row.get("url")):
             return LOOKING_UP_TITLE  # a photo post, story tray or slideshow: the probe names it
+        if row.get("state") in ("queued", "probing"):
+            return host_title(row.get("url"))  # the instant card: the probe fills in the title
         return row.get("url") or ""
 
     @staticmethod

@@ -307,7 +307,15 @@ class SettingsPage(QWidget):
                        "The quality used for new downloads.")
         quality = _SettingRow("Default quality", self._helper("Used for new links"),
                               [self.preset_combo], self.preset_combo)
-        group("Downloads", [parallel, speed, quality])
+        self.faster_combo = QComboBox()
+        self.faster_combo.addItem("Auto", "auto")
+        self.faster_combo.addItem("Off", "off")
+        self._describe(self.faster_combo, "Faster downloads",
+                       "Auto looks each link up once. Turn off if downloads fail.")
+        faster = _SettingRow("Faster downloads",
+                             self._helper("Auto looks each link up once. Turn off if downloads fail."),
+                             [self.faster_combo], self.faster_combo)
+        group("Downloads", [parallel, speed, quality, faster])
 
         # -- Photos and music ----------------------------------------------
         self.photo_mode_combo = QComboBox()
@@ -450,7 +458,8 @@ class SettingsPage(QWidget):
         for signal in (
             self.concurrency_spin.valueChanged, self.limit_check.toggled,
             self.limit_spin.valueChanged, self.limit_unit.currentIndexChanged,
-            self.preset_combo.currentIndexChanged, self.cookies_combo.currentIndexChanged,
+            self.preset_combo.currentIndexChanged, self.faster_combo.currentIndexChanged,
+            self.cookies_combo.currentIndexChanged,
             self.photo_mode_combo.currentIndexChanged, self.song_length_combo.currentIndexChanged,
             self.notify_check.toggled,
             self.tray_check.toggled, self.appearance_combo.currentIndexChanged,
@@ -467,7 +476,8 @@ class SettingsPage(QWidget):
         self.setTabOrder(self.limit_check, self.limit_spin)
         self.setTabOrder(self.limit_spin, self.limit_unit)
         self.setTabOrder(self.limit_unit, self.preset_combo)
-        self.setTabOrder(self.preset_combo, self.photo_mode_combo)
+        self.setTabOrder(self.preset_combo, self.faster_combo)
+        self.setTabOrder(self.faster_combo, self.photo_mode_combo)
         self.setTabOrder(self.photo_mode_combo, self.song_length_combo)
         self.setTabOrder(self.song_length_combo, self.detect_button)
         self.setTabOrder(self.detect_button, self.cookies_combo)
@@ -547,6 +557,7 @@ class SettingsPage(QWidget):
             self.limit_spin.setValue(number)
             self.limit_unit.setCurrentIndex(0 if unit == "K" else 1)
         self.preset_combo.setCurrentIndex(max(0, self.preset_combo.findData(s.preset_id)))
+        self.faster_combo.setCurrentIndex(max(0, self.faster_combo.findData(s.faster_downloads)))
         self.photo_mode_combo.setCurrentIndex(max(0, self.photo_mode_combo.findData(s.photo_mode)))
         self.song_length_combo.setCurrentIndex(max(0, self.song_length_combo.findData(s.song_length)))
         self.cookies_combo.setCurrentIndex(max(0, self.cookies_combo.findData(s.cookies_browser)))
@@ -584,6 +595,7 @@ class SettingsPage(QWidget):
             cookies_file=self.cookies_file_edit.text().strip() or None,
             photo_mode=self.photo_mode_combo.currentData(),
             song_length=self.song_length_combo.currentData(),
+            faster_downloads=self.faster_combo.currentData(),
         )
         if self.path is not None:
             try:

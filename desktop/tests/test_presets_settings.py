@@ -135,6 +135,7 @@ def test_apply_pushes_the_cookie_choice() -> None:
         def set_cookies(self, browser, file): calls.append((browser, file))
         def set_photo_mode(self, v): pass
         def set_song_length(self, v): pass
+        def set_reuse_probe(self, v): pass
 
     st.apply(st.Settings(cookies_browser="brave", cookies_file=None), FakeQueue())
     st.apply(st.Settings(), FakeQueue())
@@ -152,8 +153,9 @@ def test_apply_calls_queue_setters() -> None:
         def set_cookies(self, browser, file): calls.append(("ck", browser, file))
         def set_photo_mode(self, v): calls.append(("pm", v))
         def set_song_length(self, v): calls.append(("sl", v))
+        def set_reuse_probe(self, v): calls.append(("rp", v))
 
     st.apply(st.Settings(concurrency=4, speed_limit="1M", preset_id="audio-flac"), FakeQueue())
     assert calls == [("c", 4), ("l", "1M"), ("f", "bestaudio/best"),
                      ("e", ("-x", "--audio-format", "flac")),
-                     ("ck", None, None), ("pm", "video"), ("sl", "snippet")]
+                     ("ck", None, None), ("pm", "video"), ("sl", "snippet"), ("rp", True)]

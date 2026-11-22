@@ -104,9 +104,11 @@ def test_a_post_link_says_looking_up_until_the_probe_names_it(url) -> None:
     assert DownloadModel.spoken(make_snapshot(1, "probing", url=url)).startswith(LOOKING_UP_TITLE)
 
 
-def test_other_links_still_show_the_link_as_title() -> None:
-    for url in ("https://www.youtube.com/watch?v=a", f"{IG}/reel/CAbc123xyz/"):
-        assert DownloadModel.title_of(make_snapshot(1, "queued", url=url)) == url
+def test_other_links_show_the_host_as_title_until_the_probe_names_them() -> None:
+    for url, host in (("https://www.youtube.com/watch?v=a", "youtube.com"),
+                      (f"{IG}/reel/CAbc123xyz/", "instagram.com")):
+        assert DownloadModel.title_of(make_snapshot(1, "queued", url=url)) == host
+        assert DownloadModel.title_of(make_snapshot(1, "failed", url=url)) == url
 
 
 def test_adding_a_post_link_shows_the_row_at_once(qapp, ui_queue) -> None:

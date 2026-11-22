@@ -28,7 +28,8 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Collection, Mapping, Sequence
+from urllib.parse import urlsplit
 
 from . import media, mix, runner
 from .archive import Archive, _file_exists, reconcile
@@ -54,7 +55,16 @@ __all__ = [
     "ALREADY_SAVED_NOTE",
     "PHOTO_MODES",
     "SONG_LENGTHS",
+    "SPEED_EMA_ALPHA",
+    "SPEED_EMA_WARMUP",
     "QueueItem",
+    "is_rate_limit_error",
+    "may_reuse_probe",
+    "site_key",
+    "site_slot_free",
+    "smooth_speed",
+    "smoothed_eta",
+    "wait_hint",
     "DownloadQueue",
 ]
 
@@ -222,6 +232,94 @@ def _is_stale_info_failure(error: ErrorInfo, raw: str) -> bool:
     return any(text in lowered for text in _STALE_INFO_TEXT)
 
 
+# -- Brief 12C: safety rails and an honest ETA (pure functions) ---------------
+# Speed smoothing: an exponential moving average of the reported speed that
+# ignores the first seconds of a download, so "time left" does not jump.
+SPEED_EMA_ALPHA = 0.2
+SPEED_EMA_WARMUP = 2.0
+# Error codes that mean "the site is pacing us" (HTTP 429, Instagram's
+# "please wait a few minutes").
+_RATE_LIMIT_CODES: frozenset[str] = frozenset({"http_429", "rate_limited"})
+# Sites where a signed-in session is in play: they never get a speed lever.
+_SIGNED_IN_SITES: frozenset[str] = frozenset({"instagram.com", "tiktok.com"})
+_SITE_ALIASES = {"youtu.be": "youtube.com"}
+_SECOND_LEVEL = frozenset({"co", "com", "org", "net", "ac", "gov"})
+
+
+def site_key(url: str | None) -> str:
+    """A stable per-site key for *url*: ``www.youtube.com`` -> ``youtube.com``."""
+    try:
+        host = (urlsplit(url or "").hostname or "").lower().rstrip(".")
+    except ValueError:
+        return ""
+    labels = host.split(".")
+    if len(labels) > 2:
+        keep = 3 if labels[-1] and len(labels[-1]) == 2 and labels[-2] in _SECOND_LEVEL else 2
+        host = ".".join(labels[-keep:])
+    return _SITE_ALIASES.get(host, host)
+
+
+def is_rate_limit_error(error: ErrorInfo | None) -> bool:
+    """True when *error* is the site asking us to slow down (429 / "please wait")."""
+    return error is not None and error.code in _RATE_LIMIT_CODES
+
+
+def may_reuse_probe(
+    url: str,
+    *,
+    enabled: bool,
+    limited_sites: Collection[str],
+    cookies_configured: bool,
+) -> bool:
+    """Whether the download may load the probe's info instead of looking the link up again.
+
+    Never for a media-engine link, never for a signed-in Instagram / TikTok
+    link, and never for a site that already answered 429 this session.
+    """
+    if not enabled or media.route_for(url) == "media":
+        return False
+    site = site_key(url)
+    if site in limited_sites:
+        return False
+    return not (cookies_configured and site in _SIGNED_IN_SITES)
+
+
+def site_slot_free(
+    site: str, limited_sites: Collection[str], running_sites: Sequence[str]
+) -> bool:
+    """False when *site* was rate limited and one of its downloads already runs."""
+    return site not in limited_sites or site not in running_sites
+
+
+def smooth_speed(previous: float | None, sample: float, alpha: float = SPEED_EMA_ALPHA) -> float:
+    """One exponential-moving-average step (the first sample seeds it)."""
+    if previous is None:
+        return float(sample)
+    return alpha * float(sample) + (1.0 - alpha) * previous
+
+
+def smoothed_eta(
+    total_bytes: float | None, downloaded_bytes: float | None, speed: float | None
+) -> float | None:
+    """Seconds left at the smoothed *speed*, or ``None`` when it cannot be worked out."""
+    if not total_bytes or downloaded_bytes is None or not speed or speed <= 0:
+        return None
+    return max(0.0, (total_bytes - downloaded_bytes) / speed)
+
+
+def wait_hint(
+    *, rate_limited: bool, retrying_network: bool, signed_in: bool
+) -> str | None:
+    """Why an item may sit at "Starting": the first reason that applies, else ``None``."""
+    if rate_limited:
+        return "rate_limited"
+    if retrying_network:
+        return "network"
+    if signed_in:
+        return "signing_in"
+    return None
+
+
 class _ReadOnlyArchive:
     """Archive view that can read but never rewrite the file.
 
@@ -286,6 +384,12 @@ class QueueItem:
     format_label: str | None = None
     # "Download again anyway": run the media engine without its archive.
     force: bool = False
+    # Brief 12C: why the item may be slow to start ("signing_in", "network",
+    # "rate_limited", or None) and the speed average (not in the snapshot).
+    wait_hint: str | None = None
+    speed_ema: float | None = None
+    speed_since: float | None = None
+    last_bytes: float | None = None
 
     def snapshot(self) -> dict[str, Any]:
         """A plain-dict view for the UI and for events."""
@@ -301,6 +405,7 @@ class QueueItem:
             "note": self.note,
             "thumbnail": self.thumbnail,
             "format_label": self.format_label,
+            "wait_hint": self.wait_hint,
             "attempts": self.attempts,
             "error": None
             if self.error is None
@@ -377,6 +482,8 @@ class DownloadQueue:
         self._probe_url = probe_url
         self._reuse_probe = bool(reuse_probe)
         self._clock = clock
+        # Sites that answered 429 / "please wait" this session (brief 12C).
+        self._limited_sites: set[str] = set()
         # Brief 10B-1: photo posts, stories and slideshows go to gallery-dl.
         # ``None`` means "look it up on PATH when needed". The config lives
         # next to the temp folder (the cache dir) and gallery-dl's own archive
@@ -446,6 +553,20 @@ class DownloadQueue:
         """Set extra yt-dlp arguments for downloads that start after this call."""
         with self._cond:
             self._extra_args = tuple(str(a) for a in args)
+
+    def set_reuse_probe(self, enabled: bool) -> None:
+        """"Faster downloads": reuse the probe's info for later downloads."""
+        with self._cond:
+            self._reuse_probe = bool(enabled)
+
+    @property
+    def reuse_probe(self) -> bool:
+        return self._reuse_probe
+
+    def rate_limited_sites(self) -> frozenset[str]:
+        """The sites held to one download at a time this session."""
+        with self._cond:
+            return frozenset(self._limited_sites)
 
     def set_photo_mode(self, mode: str) -> None:
         """"video" (photos, song and video), "song" (photos and song) or "photos".
@@ -826,9 +947,22 @@ class DownloadQueue:
         return sum(1 for item in self._items.values() if item.owned)
 
     def _next_queued(self) -> QueueItem | None:
+        running: list[str] | None = None
         for item_id in self._order:
             item = self._items[item_id]
             if item.state == "queued" and not item.owned:
+                if self._limited_sites:
+                    if running is None:
+                        running = [site_key(i.url) for i in self._items.values() if i.owned]
+                    site = site_key(item.url)
+                    if not site_slot_free(site, self._limited_sites, running):
+                        # A rate-limited site runs one download at a time.
+                        if item.wait_hint != "rate_limited":
+                            item.wait_hint = "rate_limited"
+                            self._emit(
+                                {"type": "item", "id": item.id, "item": item.snapshot()}
+                            )
+                        continue
                 return item
         return None
 
@@ -911,6 +1045,15 @@ class DownloadQueue:
             item.files_done = None
             item.files_total = None
             item.note = None
+            item.speed_ema = None
+            item.speed_since = None
+            item.last_bytes = None
+            item.wait_hint = wait_hint(
+                rate_limited=site_key(item.url) in self._limited_sites,
+                retrying_network=item.attempts > 0,
+                signed_in=self._cookies_configured()
+                and site_key(item.url) in _SIGNED_IN_SITES,
+            )
             self._set_state(item, "probing")
 
         route = media.route_for(item.url)
@@ -1021,6 +1164,8 @@ class DownloadQueue:
             ):
                 return None
             item.error = error
+            if is_rate_limit_error(error):
+                self._limited_sites.add(site_key(item.url))
             if error.code in RETRYABLE_CODES and item.attempts < len(BACKOFF):
                 delay = BACKOFF[item.attempts]
                 item.attempts += 1
@@ -1046,7 +1191,14 @@ class DownloadQueue:
         one more run goes straight from the URL (no retry count, no backoff).
         """
         info_path: Path | None = None
-        if self._reuse_probe:
+        with self._cond:
+            allowed = may_reuse_probe(
+                item.url,
+                enabled=self._reuse_probe,
+                limited_sites=self._limited_sites,
+                cookies_configured=self._cookies_configured(),
+            )
+        if allowed:
             age = None if probed_at is None else self._clock() - probed_at
             if info is not None and _info_is_usable(info, age):
                 candidate = self.temp_dir / f"{item.id}.info.json"
@@ -1110,6 +1262,10 @@ class DownloadQueue:
             info_json=info_path,
         )
         progressed = False
+        with self._cond:
+            item.speed_ema = None
+            item.speed_since = None
+            item.last_bytes = None
 
         def on_event(event: Any) -> None:
             nonlocal progressed
@@ -1453,9 +1609,38 @@ class DownloadQueue:
                 value = event.get(field)
                 if value is not None:
                     setattr(item, field, value)
+            self._smooth(item, event)
             self._emit(
                 {"type": "progress", "id": item.id, "state": item.state, "item": item.snapshot()}
             )
+
+    def _smooth(self, item: QueueItem, event: Mapping[str, Any]) -> None:
+        """Replace the reported speed and time left with a moving average (lock held).
+
+        The first ``SPEED_EMA_WARMUP`` seconds of a file are shown as reported
+        and kept out of the average; a new file (the byte count drops) starts it
+        over. Items counting files (no byte speed) are left alone.
+        """
+        sample = event.get("speed")
+        if event.get("stage") != "downloading" or not isinstance(sample, (int, float)) or sample <= 0:
+            return
+        now = self._clock()
+        downloaded = event.get("downloaded_bytes")
+        last = item.last_bytes
+        if (
+            item.speed_since is None
+            or (isinstance(downloaded, (int, float)) and isinstance(last, (int, float)) and downloaded < last)
+        ):
+            item.speed_since = now
+            item.speed_ema = None
+        item.last_bytes = downloaded if isinstance(downloaded, (int, float)) else None
+        if now - item.speed_since < SPEED_EMA_WARMUP:
+            return
+        item.speed_ema = smooth_speed(item.speed_ema, float(sample))
+        item.speed = item.speed_ema
+        eta = smoothed_eta(item.total_bytes, item.downloaded_bytes, item.speed_ema)
+        if eta is not None:
+            item.eta = eta
 
     # -- internals: archive + output -------------------------------------
     def _is_archived(self, item: QueueItem) -> bool:

@@ -21,6 +21,7 @@ from elisium_downloader.engine.queue import (
 
 __all__ = [
     "COOKIE_BROWSERS",
+    "FASTER_DOWNLOADS",
     "Settings",
     "apply",
     "default_path",
@@ -30,6 +31,8 @@ __all__ = [
     "valid_cookies_file",
     "valid_speed_limit",
 ]
+
+FASTER_DOWNLOADS: tuple[str, ...] = ("auto", "off")
 
 _LIMIT_RE = re.compile(r"^\d+(\.\d+)?[KMG]?$")
 
@@ -88,6 +91,9 @@ class Settings:
     # post plays; "full" = the whole song.
     photo_mode: str = "video"
     song_length: str = "snippet"
+    # Brief 12C: "auto" looks each link up once and reuses that lookup for the
+    # download (reuse_probe); "off" is the old two-step way.
+    faster_downloads: str = "auto"
 
     def __post_init__(self) -> None:
         self.validate()
@@ -114,6 +120,8 @@ class Settings:
             self.photo_mode = "video"
         if self.song_length not in SONG_LENGTHS:
             self.song_length = "snippet"
+        if self.faster_downloads not in FASTER_DOWNLOADS:
+            self.faster_downloads = "auto"
 
 
 def default_path() -> Path:
@@ -162,5 +170,6 @@ def apply(settings: Settings, queue: DownloadQueue) -> None:
     queue.set_cookies(settings.cookies_browser, settings.cookies_file)
     queue.set_photo_mode(settings.photo_mode)
     queue.set_song_length(settings.song_length)
+    queue.set_reuse_probe(settings.faster_downloads == "auto")
 
 

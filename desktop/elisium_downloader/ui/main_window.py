@@ -607,6 +607,12 @@ class MainWindow(QMainWindow):
         self.thumbnails = ThumbnailCache(self._thumbnail_fetcher, self)
         self.thumbnails.ready.connect(self._repaint_rows)
         self.delegate.thumbnails = self.thumbnails
+        # Brief 12C: once a second, repaint the rows that are still starting so the
+        # "Starting... <reason>" text appears after 10 quiet seconds (no thread).
+        self._starting_timer = QTimer(self)
+        self._starting_timer.setInterval(1000)
+        self._starting_timer.timeout.connect(self._repaint_starting_rows)
+        self._starting_timer.start()
         self.table.setItemDelegateForColumn(0, self.delegate)
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setVisible(False)
@@ -748,6 +754,13 @@ class MainWindow(QMainWindow):
 
     def _repaint_rows(self) -> None:
         self.table.viewport().update()
+
+    def _repaint_starting_rows(self) -> None:
+        for n in range(self.model.rowCount()):
+            row = self.model.snapshot_at(n)
+            if row is not None and row["state"] in ("queued", "probing", "downloading"):
+                self.table.viewport().update()
+                return
 
     def _on_filter(self, key: str) -> None:
         """A count card was chosen: show only those downloads."""

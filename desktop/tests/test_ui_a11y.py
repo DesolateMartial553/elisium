@@ -77,7 +77,7 @@ def test_tab_order_through_the_main_window(win) -> None:
         seen.append(focus_name())
     assert seen[:11] == [
         "Sections", "Video link", "Paste", "Download", "Options", "All: 1", "Downloads",
-        "Pause https://a.com/1", "Cancel https://a.com/1",  # the selected row's own buttons
+        "Pause a.com", "Cancel a.com",  # the selected row's own buttons (the host until the probe names it)
         "Pause", "Cancel",  # then the unchanged toolbar
     ]
     QTest.keyClick(QApplication.focusWidget(), Qt.Key.Key_Tab)

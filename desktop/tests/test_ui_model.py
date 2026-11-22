@@ -39,7 +39,7 @@ def test_rows_title_fallback_and_update(qapp) -> None:
     model = DownloadModel()
     model.load([make_snapshot(1)])
     assert model.rowCount() == 1
-    assert cell(model, 0, 0) == "https://example.com/v/1"  # URL until probe gives a title
+    assert cell(model, 0, 0) == "example.com"  # the host until probe gives a title (brief 12C)
     model.handle_event({"type": "item", "id": 1, "item": make_snapshot(1, title="Big Buck Bunny")})
     assert cell(model, 0, 0) == "Big Buck Bunny"
     model.handle_event({"type": "added", "item": make_snapshot(2)})
