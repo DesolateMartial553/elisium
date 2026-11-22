@@ -1,36 +1,62 @@
-# Elisium design: "Afterglow"
+# Elisium design: "Night shelf"
 
-One look for both apps. Source of truth for colour and sizes: `design/tokens.json` (checked by `python3 design/contrast_check.py`, which must stay ALL PASS). Never invent new colours; use tokens.
+Owner's pick on 2026-11-22, for **both** the desktop and the phone. It is the only design: both apps are built on it.
+Mockup: https://claude.ai/artifact/7Y3QxXNMDL9PiesAsqsZB1 (desktop) and https://claude.ai/artifact/As1YVj8NtnAJdqVkQFKR3Q (phone).
+Colours and sizes come only from `design/tokens.json`. `python3 design/contrast_check.py` must stay ALL PASS.
 
-## Idea
-Elisium means a place of calm and light. The app is a quiet ink-violet night with one luminous accent: a horizon **glow** that runs violet -> rose -> amber (`glowA` -> `glowB` -> `glowC`). Everything else is soft, rounded and low-contrast-in-decoration, high-contrast-in-text. Beauty comes from restraint plus ONE glowing signature, not from many effects.
+## The idea
+Elisium is a shelf of your media at night. Your thumbnails do the decorating. The interface is true black (or plain
+light grey by day), with no borders, glows or shadows. Colour goes on one thing only: the progress of a download.
 
-## Themes
-- **Nightfall** (`dark`) is the identity and the default.
-- **Daybreak** (`light`) is the same layout on a pale lilac-white ground.
-- Follow the system light/dark setting; fall back to Nightfall. The user may force one in Settings (System / Night / Day).
-- Android: do NOT use Material You dynamic colour by default (it would erase the identity).
+## The one move (keep it intact)
+- Elevation by lightness alone: `ground` < `surface` < `raised`. No borders on cards, no shadows on anything at rest.
+  The only shadow allowed is on something truly floating (a menu, a dialog).
+- The one hue (`hue`, sky blue at night, deep blue by day) is used **only** for progress bars, the selected count card's
+  outline, and the focus ring. Never on buttons, tabs, navigation, headings or icons.
+- The primary action is made primary by **inversion**: a white pill with black text at night, a black pill with white text by day.
+- The active navigation item is shown only by its label going from `faint` to `text`, with no pill, bar or tint behind it.
 
-## Signature elements (these make it "uniquely Elisium")
-1. **Glow progress**: download progress is a thick rounded bar filled with the glow gradient, with a soft glowing leading edge (a blurred brighter cap). Paused = muted gradient (no glow). Done = solid `success`. Failed = `error`. Never rely on colour alone: state text always shown.
-2. **Horizon header**: the top of each main screen carries a faint glow band (the gradient at ~12-18% opacity fading to the background) behind the wordmark. The wordmark "Elisium" is set large with a gradient fill (use solid `text` colour as fallback where gradient text is not supported).
-3. **Raised cards**: queue and history rows are rounded cards (`raised` on `surface`, radius `medium`) with a 1px `outline` border and generous padding, instead of dense table gridlines. One selected/active card gets a 1px glow-gradient border.
-4. **State chips**: small rounded pills with an icon + word (Queued, Downloading, Merging, Done, Failed, Paused), tinted from the semantic tokens.
-5. **Empty state**: a large soft glowing glyph (the app icon's arrow) with one warm sentence; no clip-art.
-6. **Icon**: arrow-into-tray glyph, but drawn with the glow gradient on an ink-violet rounded square with a faint horizon line. Update both launcher icons to match.
+## Banned (the reasons a media app reads as generated)
+Gradients of any kind, including text and progress. Glows and blurred edges. Violet or indigo. A coloured pill behind the
+active nav item. Icons in tinted squares. Emoji. Tiny uppercase letter-spaced labels. Monospace outside code.
+Anything not listed in the tokens.
 
 ## Type
-- Sans: Inter (bundled on Android; on desktop use "Inter" if installed, else the system UI font). Wordmark and screen titles: weight 700-800, slightly tight tracking. Body 400-500. Numbers (speed, size, ETA) use tabular figures where available.
-- Sizes: title 28, section 18, body 15-16, caption 13. Never below 13. Must stay usable at 200% font scale.
+- Hanken Grotesk (SIL Open Font License, Google Fonts), bundled in both apps with its OFL text next to the font files:
+  desktop `desktop/elisium_downloader/ui/fonts/`, Android `android/app/src/main/res/font/`. Static weights 400, 600, 700.
+- Sizes: screen title 20, row title 15/600, big figure (percent) 24/600, body 14, meta 13, small 12. Nothing smaller than 12.
+- Every number that updates (percent, MB/s, size, time left, counts) uses tabular figures.
+- Sentence case everywhere. Must stay usable at 200% font scale.
 
-## Shape and space
-Radii small 10 / medium 16 / large 24. 4-point spacing scale from tokens. Min touch/click target 44-48. Focus ring: 2px `accent` outline with 2px offset, always visible for keyboard users (never removed).
+## Screens and components
+- **Top bar (desktop, no sidebar):** 48 px, on the ground colour, no border. Left: the mark and "Elisium" (18/700),
+  then the text links Downloads, History, Settings (14/600, `faint`; active `text`). Right: the link field (pill, 36 px,
+  `surface` fill) and the Download pill (inverted). A 1 px `raised` rule appears under it only once content scrolls under it.
+- **Phone top bar:** 56 px with the mark, "Elisium" and a menu button (History, Settings live in the menu sheet).
+  Below it: the link field and the Download pill, 44 px tall.
+- **Count cards = filters:** All, Downloading, Waiting (queued + paused), Failed, Done. Desktop: 5 equal cards, 61 px,
+  `surface`, 13 px label over a 16/600 count; the selected one has a 1.5 px `hue` outline. Phone: a row of 36 px chips you
+  swipe sideways. Zero prints as 0. These are the filters for the list below.
+- **Download row:** 80 px, `surface`, radius 16, 8 px apart. Thumbnail 112 x 63 (phone 104 x 59), radius 10, the item's
+  real thumbnail (placeholder: a `raised` block with the site name, never an icon in a box). Title 15/600 one line
+  (phone: two lines). Meta line 13 `faint`: "Site · format · size", or for multi-file posts "Instagram · 6 photos + song · 3 of 7 files".
+  A 4 px progress bar in `hue` on a `track`. Right column: percent 24/600 over "4.2 MB/s · 1 min 37 s left" 12 `muted`.
+- **Row states (text always says the state; colour never carries it alone):**
+  Downloading: hue bar + percent + speed/time left. Paused: bar in `faint`, "Paused · 136.0 MB to go".
+  Waiting: "Waiting" in `faint` + size or "Starts next". Failed: the plain reason in `negative` and one inverted pill for the
+  fix ("Sign in", "Retry"). Done: "Done" in `positive` + "Open · Show in folder".
+- **History and Settings:** same ground/surface/raised steps and the same row anatomy; settings are grouped lists on `surface`
+  with one setting per row. Approved by the owner 2026-11-22: https://claude.ai/artifact/KpTfdZAD13xd6qPYApJM8F (History: grouped by day, search, site filter, Open / Show in folder / Download again; Settings: Downloads, Photos and music, Accounts, Appearance, About).
+- **Mark:** three stacked rounded bars getting shorter (a queue), the last one in `hue`. Launcher icon: the same mark on a black square.
 
 ## Motion
-`fast` 120 / `base` 220 / `slow` 420 ms, ease-out. Used for: card enter (fade + 8px rise), progress fill easing, tab/page cross-fade, chip colour change, a slow breathing of the glow edge while downloading. **Respect reduced motion** (Android `Settings.Global.ANIMATOR_DURATION_SCALE == 0` / "remove animations"; desktop: a Settings switch "Reduce motion" plus honour `QT` no-animation env if present): then no breathing, no rises, instant changes. Motion never carries meaning on its own.
+120-200 ms, ease-out. Progress fills ease; a new row fades in with a 6 px rise; count changes cross-fade. No breathing, pulsing
+or looping. Respect reduced motion (desktop "Reduce motion" setting, Android remove-animations): instant changes.
 
-## Accessibility (non-negotiable)
-Contrast per `contrast_check.py`. Keep every existing accessible name, role, live region and keyboard shortcut from the current apps; the redesign changes looks, not semantics. Do not hide information in hover-only states. Screen-reader text for the glow progress stays "N percent".
+## Accessibility (unchanged, non-negotiable)
+Keep every accessible name, role, live region, keyboard shortcut and TalkBack/Orca text ("N percent"). The focus ring is a
+2 px `focus` outline with 2 px offset and is never removed. 44 px minimum touch target on the phone.
 
 ## Copy voice
-Warm, short, plain. "Paste a link to begin" not "No items". Errors keep the existing plain-language messages.
+Short, plain, specific. "Paste a link from YouTube, Instagram, TikTok…", "Instagram sign-in has expired" + "Sign in".
+Error wording stays exactly as in `core-spec/SPEC.md`.

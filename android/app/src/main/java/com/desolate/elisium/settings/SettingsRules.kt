@@ -6,7 +6,7 @@ import com.desolate.elisium.engine.Presets
 import com.desolate.elisium.media.PhotoMode
 import com.desolate.elisium.media.SongLength
 
-/** Which Afterglow theme to show: follow the system, or force Nightfall / Daybreak. */
+/** Which Night shelf theme to show: follow the system, or force Nightfall / Daybreak. */
 enum class Appearance(val storedValue: String) {
     System("system"),
     Night("night"),

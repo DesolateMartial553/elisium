@@ -2,7 +2,7 @@
 
 This is the ONLY module that contains colour values. Everything else asks a
 ``Palette`` for a token by name (``palette.color("hue")``). The values below
-are copied from ``design/nightshelf/tokens.json`` by hand (the design folder is
+are copied from ``design/tokens.json`` by hand (the design folder is
 not packaged, so it cannot be read at run time); ``tests/test_theme.py`` asserts
 they are equal, so drift fails the test.
 

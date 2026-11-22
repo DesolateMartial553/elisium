@@ -40,8 +40,9 @@ data class DownloadRequest(
     /** Best size estimate from the probe (`filesize` / `filesize_approx`), or null when unknown. */
     val expectedBytes: Long? = null,
     /**
-     * The imported `cookies.txt` to pass as `--cookies`, or null. Only the path is kept: the app
-     * never reads, copies or logs the cookie contents.
+     * The imported `cookies.txt` to pass as `--cookies`, or null. yt-dlp gets only the path. The media
+     * client (photo posts, stories) reads the file in-process, only to build its request headers; the
+     * cookie contents are never copied elsewhere or logged.
      */
     val cookiesFile: File? = null,
     /**

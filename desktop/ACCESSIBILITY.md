@@ -5,9 +5,9 @@
 - Keyboard: Tab order Link box, Paste, Download, Options, Sections list, Downloads table, toolbar. Tab leaves tables (it does not walk cells). Shortcuts: see F1 (the cheat sheet and the registered shortcuts come from one table, `SHORTCUTS` in `ui/main_window.py`).
 - Progress announcements: one zero-height live label on the main window. A `QAccessibleAnnouncementEvent` (polite) is sent at 25, 50 and 75 percent, then "finished" or "failed" (with the plain-language reason), per download. Ticks in between are silent (max 4 per item).
 - Not colour alone: tables, history, notifications and the playlist dialog ("Unavailable") use words.
-- Contrast: an `AccessibleStyle` wrapper around the style you configured (qt6ct, Kvantum, Fusion...) outlines check boxes and radio buttons and draws a 2 px focus ring in the palette's own text colour. No colours are hard-coded, so it follows your theme.
+- Contrast: the Night shelf theme (Night and Day palettes, `design/tokens.json`) is checked pair by pair against WCAG 2.2 by `python3 design/contrast_check.py` (must print ALL PASS) and by `tests/test_theme.py`. An `AccessibleStyle` wrapper still draws a 2 px focus ring and outlines check boxes and radio buttons. Status is words, never colour alone.
 - 200% text: section links, rows, settings rows and dialogs size from the font; no clipped labels, no sideways scrolling on the table pages.
-- Reduced motion: `ELISIUM_REDUCE_MOTION=1` (or `=0` to force off) removes the busy bar in the Choose quality and playlist dialogs; the text "Checking the link..." stays. PySide6 6.12 has no reduced-motion style hint, so the environment variable is the only switch.
+- Reduced motion: Settings > Appearance > Reduce motion, or `ELISIUM_REDUCE_MOTION=1` (or `=0` to force off) removes the busy bar in the Choose quality and playlist dialogs; the text "Checking the link..." stays. PySide6 6.12 has no reduced-motion style hint, so the environment variable is the only switch.
 - Tray and notifications: a StatusNotifier tray icon (shown by waybar's tray module on Hyprland) with Show/Hide, Pause all, Resume all, Open download folder, Quit; do not rely on a left click, the menu always works. Notifications go through `QSystemTrayIcon.showMessage` (freedesktop notifications, e.g. dunst). If no tray exists the window simply closes as with "Keep running in the tray" off. On Wayland the app cannot reliably raise or focus its own window: Show only calls show/raise/activate.
 
 ## How it was tested (automated, headless)
@@ -16,7 +16,8 @@
 ## Not tested
 - **Orca was NOT run by the author.** The offscreen platform has no AT-SPI bus, so what a screen reader actually says is unverified. Announcement events are only checked to be sent without error.
 - A real tray (waybar), real dunst notifications and clicking a notification were not tried.
-- Contrast was measured with test palettes, not with your qt6ct/Kvantum theme.
+- Contrast was measured on the app's own Night and Day palettes, not on your qt6ct/Kvantum colours.
+- Photo posts: the file counter ("3 of 7 files"), the note under a card and the "Looking up the post..." title are plain text on the row and in its accessible description; whether Orca reads them in a useful order is unverified.
 - Orca key echo and global keys are limited on Wayland compositors (Hyprland), so some Orca behaviour differs from X11.
 
 ## Manual Orca checklist (Hyprland / Wayland session)

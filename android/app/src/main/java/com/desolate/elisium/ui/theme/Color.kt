@@ -3,7 +3,7 @@ package com.desolate.elisium.ui.theme
 import androidx.compose.ui.graphics.Color
 
 /**
- * Night shelf colour tokens, copied from `design/nightshelf/tokens.json` (a JVM test reads that file and
+ * Night shelf colour tokens, copied from `design/tokens.json` (a JVM test reads that file and
  * fails if they drift). Never add a colour here that is not in the token file.
  */
 data class ShelfPalette(

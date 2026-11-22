@@ -9,7 +9,8 @@ data class CookiesImport(val check: CookiesCheck, val status: CookiesStatus)
 /**
  * The cookies file, as Settings sees it. The in-app Instagram sign-in writes it (a WebView session);
  * a `cookies.txt` picked with the system document picker is still accepted as the advanced route.
- * Only its path is ever given to yt-dlp.
+ * yt-dlp is given only its path; the media client reads it in-process, only to build request headers,
+ * and never logs it.
  */
 interface CookiesStore {
     fun status(): CookiesStatus

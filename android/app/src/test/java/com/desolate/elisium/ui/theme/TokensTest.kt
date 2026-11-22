@@ -16,15 +16,15 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Finds `design/nightshelf/tokens.json` by walking up from the test working directory (android/app) to the project root. */
+/** Finds `design/tokens.json` by walking up from the test working directory (android/app) to the project root. */
 internal fun tokensFile(): File {
     var dir: File? = File("").absoluteFile
     while (dir != null) {
-        val candidate = File(dir, "design/nightshelf/tokens.json")
+        val candidate = File(dir, "design/tokens.json")
         if (candidate.isFile) return candidate
         dir = dir.parentFile
     }
-    error("design/nightshelf/tokens.json not found above ${File("").absolutePath}")
+    error("design/tokens.json not found above ${File("").absolutePath}")
 }
 
 private fun tokenRoot(): JsonObject = Json.parseToJsonElement(tokensFile().readText()).jsonObject
@@ -44,7 +44,7 @@ private fun luminance(argb: Int): Double {
     return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
 }
 
-/** Same formula as `design/nightshelf/contrast_check.py`. */
+/** Same formula as `design/contrast_check.py`. */
 private fun ratio(a: Int, b: Int): Double {
     val la = luminance(a)
     val lb = luminance(b)
@@ -52,7 +52,7 @@ private fun ratio(a: Int, b: Int): Double {
 }
 
 class TokensTest {
-    // (foreground, background, minimum): identical to PAIRS in design/nightshelf/contrast_check.py.
+    // (foreground, background, minimum): identical to PAIRS in design/contrast_check.py.
     private val pairs = listOf(
         Triple("text", "ground", 4.5), Triple("text", "surface", 4.5), Triple("text", "raised", 4.5),
         Triple("muted", "ground", 4.5), Triple("muted", "surface", 4.5), Triple("muted", "raised", 4.5),

@@ -4,7 +4,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Shapes
 import androidx.compose.ui.unit.dp
 
-/** Radii and sizes from `design/nightshelf/tokens.json` (a JVM test reads the file and fails if these drift). */
+/** Radii and sizes from `design/tokens.json` (a JVM test reads the file and fails if these drift). */
 object Radius {
     const val THUMB = 10
     const val ROW = 16

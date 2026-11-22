@@ -28,7 +28,7 @@ from elisium_downloader.ui.model import (
 
 from conftest import make_snapshot
 
-DESIGN = Path(__file__).resolve().parents[2] / "design" / "nightshelf"
+DESIGN = Path(__file__).resolve().parents[2] / "design"
 UI = Path(__file__).resolve().parents[1] / "elisium_downloader" / "ui"
 
 
@@ -59,7 +59,7 @@ def window(qapp, ui_queue):
     win.deleteLater()
 
 
-def test_tokens_equal_nightshelf_tokens_json() -> None:
+def test_tokens_equal_design_tokens_json() -> None:
     data = json.loads((DESIGN / "tokens.json").read_text())
     assert theme.TOKENS["dark"] == data["dark"]
     assert theme.TOKENS["light"] == data["light"]
@@ -73,7 +73,7 @@ def test_tokens_equal_nightshelf_tokens_json() -> None:
     assert theme.TYPE["minimum"] == data["type"]["minimum"]
 
 
-def test_nightshelf_contrast_check_prints_all_pass() -> None:
+def test_design_contrast_check_prints_all_pass() -> None:
     import subprocess
     import sys
     out = subprocess.run([sys.executable, str(DESIGN / "contrast_check.py")],

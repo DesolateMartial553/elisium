@@ -4,6 +4,43 @@ Plan: `~/.claude/plans/lets-start-preparing-with-snazzy-koala.md`. Spec: `core-s
 
 Workflow: OpenCode implements one brief from `briefs/`; Claude audits the diff and runs the checks; if OpenCode is out of usage, a Sonnet (big) or Haiku (small) subagent takes the same brief. Record who did what below.
 
+## State on 2026-11-22 (phases 10-12 built, nothing released)
+Version in the tree: Android 0.6.0 (versionCode 6), desktop pyproject and PKGBUILD 0.6.0. Nothing is committed to a tag, pushed or released by this brief.
+
+**Shipped (in the working tree):**
+- Photo posts, carousels, stories, highlights and TikTok slideshows on both apps (desktop: gallery-dl; Android: own Kotlin client), one folder per owner, per-file progress, notes, thumbnails and format labels, "Download again anyway" / "Already saved".
+- Song cut to the post's snippet plus a photos+song video (ffmpeg), with photo/song settings on both apps.
+- Night shelf design on both apps (the only design now: `design/DESIGN.md`, `design/tokens.json`, `design/contrast_check.py`, `design/fonts/`).
+- Faster downloads (extract once, native audio streams, per-site 429 rail, smoothed ETA, "Starting... <reason>"). No aria2c, no `-N` (see 12A).
+- SPEC.md, README.md, ACCESSIBILITY.md updated; unused `youtubedl-aria2c` catalog line removed.
+
+**Unverified (built and tested on fixtures only):**
+- Live Instagram and TikTok: real gallery-dl `-j` fields for Instagram/TikTok, the audio file name/extension, snippet key names in the metadata, error wording needles, signed-in story trays/highlights/private posts, thumbnail URLs without cookies (checklists in `phase10-b1`, `phase10-b2`, `phase10-c`, `phase10-d` result files).
+- Every Android screen on a device (look, TalkBack, icon, thumbnails), the 1->2 Room migration on a real install, subfolder writes in `Download/Elisium/<owner>/` on API 26-28 and 29+, wake and Wi-Fi locks, `--load-info-json` with no URL on every site, speed effects of Faster downloads on a phone. Android screenshots come after a device test; there are none in the README yet.
+- Desktop: real D-Bus file selection ("Show in folder"), Orca, real tray/dunst, the PKGBUILD (never built end to end).
+- `desktop/elisium_downloader/__init__.py` still says `__version__ = "0.1.0"` (not in the 10F edit list): `elisium --version` prints 0.1.0 until it is bumped.
+
+**Needs the owner:** a few real public links (one Instagram photo post, a carousel, a photo+music post, a TikTok slideshow) and a signed-in browser for the live check; a phone test of the APK; a yes to push and to release; a yes before installing aria2c (not planned).
+
+**Release checklist (all NOT DONE):**
+1. NOT DONE - changelog / release notes (what is new in 0.6.0).
+2. NOT DONE - bump `desktop/elisium_downloader/__init__.py` to 0.6.0.
+3. NOT DONE - owner phone-tests `Elisium-debug-0.6.0.apk`; fix what breaks.
+4. NOT DONE - live Instagram/TikTok check; fix needles and field names.
+5. NOT DONE - commit, tag `v0.6.0`.
+6. NOT DONE - `git push` and push the tag (owner says yes first).
+7. NOT DONE - GitHub Release `v0.6.0` with the APK attached.
+
+**12F re-bench (2026-11-22, `tools/bench.py --rounds 2 --configs base,once`, public 19 s YouTube clip, 720p, medians):**
+
+| URL | config | start s | (probe s) | transfer s | post s | total s | MB | MB/s | failures |
+|---|---|---|---|---|---| 10F+11E+12F | Sonnet subagent | Agent ran all three at the end: desktop `981 passed, 2 skipped`, contrast_check ALL PASS, Gradle `:app:testDebugUnitTest :app:assembleDebug` BUILD SUCCESSFUL (640 tests, 0 failures). Claude then fixed two leftovers (`__version__` 0.6.0, one Afterglow comment) | SPEC rows for everything shipped, cookie wording fixed, Night shelf moved up into `design/` (Afterglow deleted, references updated), README/ACCESSIBILITY rewritten, versions 0.6.0 (versionCode 6), aria2c line removed, HANDOFF "State on 2026-11-22" with an unticked release checklist. 12F re-bench on the 19 s clip: base 10.0 s total (one 403), once 6.4 s. NOT tagged, pushed or released. |
+|---|---|---|---|
+| https://www.youtube.com/watch?v=jNQXAC9IVRw | base | 9.4 | 5.0 | 0.4 | 0.3 | 10.0 | 0.5 | 1.32 | 1 |
+| https://www.youtube.com/watch?v=jNQXAC9IVRw | once | 5.6 | 4.3 | 0.4 | 0.3 | 6.4 | 0.5 | 1.36 | 0 |
+
+Before (12A): base 13.3 s, once 7.9 s total. Honest reading: extract-once again saved about 3.6 s of a roughly 10 s run on a short clip (start-up, not transfer, is the cost), but the base median here is from one successful run because the other base run got a `403` on the media URL, so treat the exact seconds as rough; the direction matches 12A.
+
 ## Status
 - Phase 0 prep: done (folder, AGENTS.md, SPEC.md, briefs 1A-1C).
 - Phase 1A: DONE, audited (41 tests pass, re-run by Claude; urlnorm/errors/paths read and spot-checked). Note: xdg-user-dir returns $HOME when DOWNLOAD is unset, which would give ~/Elisium; handle in a later brief.
