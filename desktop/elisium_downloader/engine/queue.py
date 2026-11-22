@@ -30,9 +30,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
-from . import runner
+from . import media, runner
 from .archive import Archive, _file_exists, reconcile
-from .errors import ErrorInfo, apply_context, explain
+from .errors import (
+    GALLERY_DL_MISSING,
+    ErrorInfo,
+    apply_context,
+    explain,
+    explain_gallery,
+)
 from .history import History, TERMINAL_STATES
 from .urlnorm import normalize_url, video_key
 
@@ -218,6 +224,9 @@ class QueueItem:
     # "use the queue default" (an empty ``extra_args`` tuple is a real override).
     format_selector: str | None = None
     extra_args: tuple[str, ...] | None = None
+    # Media engine (gallery-dl) items count files instead of bytes.
+    files_done: int | None = None
+    files_total: int | None = None
 
     def snapshot(self) -> dict[str, Any]:
         """A plain-dict view for the UI and for events."""
@@ -245,6 +254,8 @@ class QueueItem:
                 "speed": self.speed,
                 "eta": self.eta,
                 "percent": self.percent,
+                "files_done": self.files_done,
+                "files_total": self.files_total,
             },
         }
 
@@ -279,6 +290,11 @@ class DownloadQueue:
         probe_url: Callable[..., dict[str, Any]] = runner.probe,
         reuse_probe: bool = True,
         clock: Callable[[], float] = time.monotonic,
+        gallery_dl: str | None = None,
+        probe_media: Callable[..., media.MediaPlan] = media.probe,
+        run_media: Callable[..., Any] = media.run,
+        gallery_config: str | os.PathLike[str] | None = None,
+        gallery_archive: str | os.PathLike[str] | None = None,
     ) -> None:
         self.history = history
         self.archive = archive
@@ -295,6 +311,23 @@ class DownloadQueue:
         self._probe_url = probe_url
         self._reuse_probe = bool(reuse_probe)
         self._clock = clock
+        # Brief 10B-1: photo posts, stories and slideshows go to gallery-dl.
+        # ``None`` means "look it up on PATH when needed". The config lives
+        # next to the temp folder (the cache dir) and gallery-dl's own archive
+        # next to archive.txt (the data dir), so tests never touch real paths.
+        self._gallery_dl = gallery_dl
+        self._probe_media = probe_media
+        self._run_media = run_media
+        self._gallery_config = Path(
+            gallery_config
+            if gallery_config is not None
+            else self.temp_dir.parent / "gallery-dl.json"
+        ).expanduser()
+        self._gallery_archive = Path(
+            gallery_archive
+            if gallery_archive is not None
+            else self.archive.path.parent / "gallery-archive.sqlite3"
+        ).expanduser()
         self._concurrency = _check_concurrency(concurrency)
 
         self._items: dict[int, QueueItem] = {}
@@ -749,10 +782,15 @@ class DownloadQueue:
 
     # -- internals: one attempt ------------------------------------------
     def _attempt(self, item: QueueItem) -> float | None:
-        """Probe, reconcile, download once.
+        """Route, probe, reconcile, download once.
 
         Returns ``None`` when the item is finished with (terminal, paused or
         stopped) or the number of seconds to wait before the next attempt.
+
+        Story trays, highlights and TikTok photo posts go straight to the media
+        engine. An Instagram post (or single story) goes to yt-dlp first and,
+        if yt-dlp says "no video in this post", to the media engine at once:
+        no retry is counted and nothing sleeps. Everything else is yt-dlp.
         """
         with self._cond:
             if not self._running or item.state != "queued" or not item.owned:
@@ -763,8 +801,27 @@ class DownloadQueue:
             item.total_bytes = None
             item.speed = None
             item.eta = None
+            item.files_done = None
+            item.files_total = None
             self._set_state(item, "probing")
 
+        route = media.route_for(item.url)
+        if route == "media":
+            error = self._media_attempt(item)
+        else:
+            error = self._ytdlp_attempt(item)
+            if (
+                route == "ytdlp_then_media"
+                and error is not None
+                and error.code == "no_media"
+            ):
+                error = self._media_fallback(item)
+        if error is None:
+            return None
+        return self._after_failure(item, error)
+
+    def _ytdlp_attempt(self, item: QueueItem) -> ErrorInfo | None:
+        """The yt-dlp path: probe, archive reconcile, download. ``None`` = handled."""
         info: Mapping[str, Any] | None = None
         probed_at: float | None = None
         error: ErrorInfo | None = None
@@ -800,10 +857,27 @@ class DownloadQueue:
                     return None
                 self._set_state(item, "downloading")
             error, _raw = self._download(item, info, probed_at)
+        return error
 
-        if error is None:
-            return None
-        return self._after_failure(item, error)
+    def _media_fallback(self, item: QueueItem) -> ErrorInfo | None:
+        """Re-run an item the media engine's way after yt-dlp found no video."""
+        with self._cond:
+            if (
+                not self._running
+                or not item.owned
+                or item.state not in ACTIVE_STATES
+            ):
+                return None
+            item.error = None
+            item.percent = None
+            item.downloaded_bytes = None
+            item.total_bytes = None
+            item.speed = None
+            item.eta = None
+            if item.state != "probing":
+                self._set_state(item, "probing")
+        return self._media_attempt(item)
+
     @staticmethod
     def _learn_archive_key(item: QueueItem, info: Any) -> None:
         if item.video_key is not None or not isinstance(info, Mapping):
@@ -962,6 +1036,114 @@ class DownloadQueue:
         self._discard(path_file)
         return explain(raw, item.url, self._cookies_configured()), raw, progressed
 
+    # -- internals: the media engine (gallery-dl) ------------------------
+    def _media_attempt(self, item: QueueItem) -> ErrorInfo | None:
+        """Probe and download *item* with gallery-dl (state is ``probing``).
+
+        Returns ``None`` on success and on a user pause/cancel, else the
+        plain-language failure. A missing gallery-dl is ``gallery_dl_missing``.
+        """
+        binary = self._gallery_dl or media.find_gallery_dl()
+        if not binary:
+            return GALLERY_DL_MISSING
+        with self._cond:
+            browser, cookie_file = self._cookies_browser, self._cookies_file
+            limit = self._limit_rate
+        has_cookies = bool(browser or cookie_file)
+        try:
+            config = media.write_config(self._gallery_config)
+        except OSError:
+            return _UNKNOWN
+        try:
+            plan = self._probe_media(
+                item.url,
+                binary,
+                config_path=config,
+                cookies_browser=browser,
+                cookies_file=cookie_file,
+            )
+        except media.MediaProbeError as exc:
+            return exc.info
+        except OSError:
+            return GALLERY_DL_MISSING
+
+        with self._cond:
+            if not self._running or item.state != "probing":
+                return None  # paused or cancelled while probing
+            title = plan.display_title
+            if title is not None:
+                item.title = title
+            item.files_done = 0
+            item.files_total = plan.total
+            self._emit({"type": "item", "id": item.id, "item": item.snapshot()})
+            self._set_state(item, "downloading")
+
+        directory = media.item_directory(self.temp_dir, item.identity)
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return _UNKNOWN
+        opts = media.MediaOptions(
+            url=item.url,
+            directory=directory,
+            config_path=config,
+            archive_path=self._gallery_archive,
+            gallery_dl=str(binary),
+            limit_rate=limit,
+            cookies_browser=browser,
+            cookies_file=cookie_file,
+        )
+        try:
+            self._gallery_archive.parent.mkdir(parents=True, exist_ok=True)
+            handle = self._run_media(
+                opts,
+                lambda event: self._on_progress(item, event),
+                files_total=plan.total,
+            )
+        except OSError:
+            return GALLERY_DL_MISSING
+        with self._cond:
+            item.handle = handle
+            stop_now = item.state in ("paused", "cancelled")
+        if stop_now:
+            handle.terminate()
+        handle.wait()
+        raw = handle.raw_log
+        returncode = handle.returncode
+        terminated = bool(getattr(handle, "terminated", False))
+
+        with self._cond:
+            item.handle = None
+            if item.state in ("paused", "cancelled"):
+                return None  # staged files stay; a resume moves them later
+
+        # Move whatever finished, even after a failure: a retry then only
+        # fetches the files that are still missing (the archive skips the rest).
+        owner = plan.owner or media.classify_media_url(item.url).username
+        moved = media.finalize(directory, self.output_dir, owner)
+        first = moved.first
+        if returncode == 0 and not terminated:
+            with self._cond:
+                if item.state not in DOWNLOADING_STATES:
+                    return None
+                finished = list(getattr(handle, "finished", ()))
+                if moved.moved or (finished and not moved.existing):
+                    item.file_path = None if first is None else str(first)
+                    item.percent = 100.0
+                    item.files_done = plan.total
+                    self._set_state(item, "done", file_path=item.file_path)
+                else:
+                    # Nothing new: every file was skipped (archive, or a file
+                    # of that name was already in the output folder).
+                    item.file_path = None if first is None else str(first)
+                    item.error = ALREADY_DOWNLOADED
+                    self._set_state(item, "skipped", error=ALREADY_DOWNLOADED)
+            return None
+        if first is not None and moved.moved:
+            with self._cond:
+                item.file_path = str(first)
+        return explain_gallery(raw, item.url, has_cookies)
+
     @staticmethod
     def _read_path_file(path_file: Path) -> str | None:
         """Last non-empty line of yt-dlp's ``--print-to-file`` output."""
@@ -990,7 +1172,15 @@ class DownloadQueue:
             if stage in runner.STAGES and item.state != stage and not housekeeping:
                 self._set_state(item, str(stage))
             item.stage = stage if isinstance(stage, str) else None
-            for field in ("downloaded_bytes", "total_bytes", "speed", "eta", "percent"):
+            for field in (
+                "downloaded_bytes",
+                "total_bytes",
+                "speed",
+                "eta",
+                "percent",
+                "files_done",
+                "files_total",
+            ):
                 value = event.get(field)
                 if value is not None:
                     setattr(item, field, value)

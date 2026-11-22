@@ -23,6 +23,18 @@ def _never_scan_real_browser_profiles(monkeypatch):
     monkeypatch.setattr(browsers, "detect_default", lambda: [])
 
 
+@pytest.fixture(autouse=True)
+def _never_run_the_real_gallery_dl(monkeypatch):
+    """No test may reach the real ``gallery-dl`` (it would go online).
+
+    A routing slip then fails as ``gallery_dl_missing`` instead. Tests that
+    need the media engine pass a fake binary to the queue explicitly.
+    """
+    from elisium_downloader.engine import media
+
+    monkeypatch.setattr(media, "find_gallery_dl", lambda: None)
+
+
 @pytest.fixture(scope="session")
 def qapp():
     from PySide6.QtWidgets import QApplication

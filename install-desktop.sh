@@ -1,6 +1,7 @@
 #!/bin/sh
 # Install Elisium for the current user (no sudo). Re-run to update.
 # Needs: python, pyside6, yt-dlp, ffmpeg  (Arch: sudo pacman -S pyside6 yt-dlp ffmpeg)
+# Optional: gallery-dl (photo posts, carousels, stories, TikTok slideshows)
 set -eu
 
 SRC="$(cd "$(dirname "$0")" && pwd)/desktop"
@@ -18,6 +19,10 @@ if [ -n "$missing" ]; then
     echo "On Arch, run: sudo pacman -S$missing"
     exit 1
 fi
+
+# Photo posts, carousels, stories and TikTok slideshows need gallery-dl. It is
+# optional (videos work without it), so only hint, never install or fail.
+command -v gallery-dl >/dev/null 2>&1 || echo "Tip: for photo posts, carousels and stories, install gallery-dl (Arch: sudo pacman -S gallery-dl)"
 
 mkdir -p "$PREFIX" "$BIN" "$APPS" "$ICONS" "${XDG_CONFIG_HOME:-$HOME/.config}"
 rm -rf "$PREFIX/elisium_downloader"

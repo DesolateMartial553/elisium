@@ -1,0 +1,3 @@
+[instagram][error] HttpError: '401 Unauthorized' for 'https://www.instagram.com/api/v1/...'
+[instagram][error] AuthRequired: 'authenticated cookies'
+[instagram][warning] Redirected to login page

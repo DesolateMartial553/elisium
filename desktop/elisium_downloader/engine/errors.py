@@ -13,10 +13,20 @@ session is reported as such (brief 9A). Both arguments are optional: calling
 from __future__ import annotations
 
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from .urlnorm import site_kind
 
-__all__ = ["ErrorInfo", "apply_context", "explain"]
+__all__ = [
+    "ErrorInfo",
+    "GALLERY_DL_MISSING",
+    "NO_MEDIA_FILES",
+    "PRIVATE_ACCOUNT",
+    "STORY_EXPIRED",
+    "apply_context",
+    "explain",
+    "explain_gallery",
+]
 
 
 @dataclass(frozen=True)
@@ -166,6 +176,82 @@ _TABLE: tuple[tuple[tuple[str, ...], ErrorInfo], ...] = (
 )
 
 
+# -- gallery-dl (the photo/story engine, brief 10B-1) -------------------------
+GALLERY_DL_MISSING = ErrorInfo(
+    "Photo downloads need gallery-dl. Install it: sudo pacman -S gallery-dl",
+    "Install gallery-dl",
+    "gallery_dl_missing",
+)
+STORY_EXPIRED = ErrorInfo(
+    "This story has expired. Stories last 24 hours.",
+    "Check the link",
+    "story_expired",
+)
+PRIVATE_ACCOUNT = ErrorInfo(
+    "This account is private. Follow it in your browser, then sign in here.",
+    "Follow the account in your browser, then sign in in Settings > Accounts",
+    "private_account",
+)
+# gallery-dl ran and found nothing it could save (no error text to go on).
+NO_MEDIA_FILES = ErrorInfo(
+    "There are no photos or videos to download here.",
+    "Check the link",
+    "no_media",
+)
+
+# gallery-dl's own wording. Needles are deliberately narrow ("404 not found",
+# never a bare "not found") so they cannot catch rows of the yt-dlp table such
+# as "ffmpeg not found". First match wins; checked before the yt-dlp table.
+_GALLERY_TABLE: tuple[tuple[tuple[str, ...], ErrorInfo], ...] = (
+    (("gallery-dl is missing",), GALLERY_DL_MISSING),
+    (
+        (
+            "private account",
+            "account is private",
+            "user is private",
+            "profile is private",
+        ),
+        PRIVATE_ACCOUNT,
+    ),
+    (
+        (
+            "story has expired",
+            "stories have expired",
+            "story expired",
+            "story is no longer available",
+        ),
+        STORY_EXPIRED,
+    ),
+    (
+        (
+            "redirected to login",
+            "login required",
+            "authrequired",
+            "authentication required",
+            "requires authentication",
+            "401 unauthorized",
+            "you need to log in",
+        ),
+        _IG_SIGNED_IN,
+    ),
+    (
+        (
+            "429 too many requests",
+            "http error 429",
+            "rate limit",
+            "please wait a few minutes",
+        ),
+        _IG_RATE,
+    ),
+    (
+        ("404 not found", "http error 404", "notfounderror"),
+        ErrorInfo(
+            "This video is not available.", "Check the link", "video_unavailable"
+        ),
+    ),
+)
+
+
 def _instagram_only(url: str | None) -> bool:
     """True when a message may name Instagram: no URL, or an Instagram URL."""
     if url is None:
@@ -206,3 +292,39 @@ def explain(
         if any(needle in text for needle in needles):
             return apply_context(info, url, hasCookies)
     return _FALLBACK
+
+
+def explain_gallery(
+    raw_log: str, url: str | None = None, hasCookies: bool = False
+) -> ErrorInfo:
+    """Map gallery-dl output to an :class:`ErrorInfo` (never raises).
+
+    gallery-dl's own wording is tried first, then the yt-dlp table (its
+    "connection" / "timed out" rows still apply). The same context rules as
+    :func:`explain` apply: a login wall with cookies configured is an expired
+    session, and a non-Instagram site never names Instagram. A 404 on a single
+    story link means the story is gone (stories last 24 hours).
+    """
+    text = (raw_log or "").lower()
+    for needles, info in _GALLERY_TABLE:
+        if any(needle in text for needle in needles):
+            if info.code == "video_unavailable" and _is_story_item(url):
+                return STORY_EXPIRED
+            return apply_context(info, url, hasCookies)
+    return explain(raw_log, url, hasCookies)
+
+
+def _is_story_item(url: str | None) -> bool:
+    """True for ``instagram.com/stories/<user>/<numeric id>``."""
+    if not isinstance(url, str) or site_kind(url) != "instagram":
+        return False
+    try:
+        segments = [s for s in urlsplit(url).path.split("/") if s]
+    except ValueError:
+        return False
+    return (
+        len(segments) >= 3
+        and segments[0] == "stories"
+        and segments[1] != "highlights"
+        and segments[2].isdigit()
+    )
