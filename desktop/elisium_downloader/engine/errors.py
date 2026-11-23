@@ -24,8 +24,10 @@ __all__ = [
     "PRIVATE_ACCOUNT",
     "STORY_EXPIRED",
     "apply_context",
+    "bulk_stop_note",
     "explain",
     "explain_gallery",
+    "is_slow_down",
 ]
 
 
@@ -328,3 +330,37 @@ def _is_story_item(url: str | None) -> bool:
         and segments[1] != "highlights"
         and segments[2].isdigit()
     )
+
+
+# -- bulk saves (brief 10G) ---------------------------------------------------
+# Text that means "the site is pacing or challenging us": a bulk run ends
+# cleanly on the first of these. Narrow on purpose: a bare "429" would match
+# file ids. Guessed from memory of the sites' wording (see the 10G result file).
+_SLOW_DOWN_NEEDLES: tuple[str, ...] = (
+    "429 too many requests",
+    "http error 429",
+    "error 429",
+    "429 client error",
+    "too many requests",
+    "please wait a few minutes",
+    "rate limit",
+    "rate-limit",
+    "ratelimit",
+    "challenge_required",
+    "challenge required",
+    "checkpoint_required",
+    "checkpoint required",
+)
+
+
+def is_slow_down(raw_log: str | None) -> bool:
+    """True when *raw_log* shows an HTTP 429, a "please wait" or a login challenge."""
+    text = (raw_log or "").lower()
+    return any(needle in text for needle in _SLOW_DOWN_NEEDLES)
+
+
+def bulk_stop_note(site: str | None, saved: int) -> str:
+    """The note on a bulk run that stopped because the site asked us to slow down."""
+    name = "TikTok" if site == "tiktok" else "Instagram"
+    noun = "post" if saved == 1 else "posts"
+    return f"{name} asked us to slow down. Saved {saved} {noun}. Try again later."

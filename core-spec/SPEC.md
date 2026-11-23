@@ -82,6 +82,15 @@ New error codes (desktop wording; Android uses the same codes except `gallery_dl
 | `no_media` (fallback) | the media engine ran and found nothing to save | There are no photos or videos to download here. | Check the link |
 Login wall -> `login_required` (or `session_expired` when cookies are configured); `429` -> `rate_limited`; `404` -> `video_unavailable`.
 
+## Bulk saves: whole profile, tabs, Saved, TikTok profile (phase 10G, desktop only)
+Android does not build these yet (they need a paginating client that cannot be checked without a device and a real account, and a bad pull can get a signed-in account flagged).
+- Links: Instagram `/<user>/`, `/<user>/reels/`, `/<user>/tagged/`, `/<user>/saved/`, `/<user>/saved/<name>/<id>/`, TikTok `/@<user>`. Trailing slashes, query strings and `www.`/`m.` do not matter. Single-post links (`/p/`, `/reel/`, `/tv/`, `/stories/...`, `/@u/video/<id>`, `/@u/photo/<id>`) and reserved paths (`/explore/`, `/accounts/`, `/reels/`, `/direct/`...) are never bulk.
+- Count probe first (list only, no download, never more than cap + 1 posts read), then the post picker (newest first, newest 50 ticked, never more than the cap). One queue item per link; one queue slot; one post at a time.
+- Slow mode, always on and not configurable off: gallery-dl `sleep-request` is the range 4-10 s, and Elisium waits a randomised 4-10 s between two posts. A bulk item never runs beside another Instagram/TikTok item (and nothing signed-in starts beside it).
+- Setting "Most posts per bulk save": default 50, clamped to 1-200 (`bulk_max_posts`). One-time warning before the first run (`bulk_warning_seen`).
+- Stop on the first sign of pacing (HTTP 429, "please wait", rate limit, login challenge): state `paused`, note "Instagram asked us to slow down. Saved N posts. Try again later." (TikTok for TikTok links). Posts already saved stay, in `<output>/<owner>/`. Adding the same link again, or Resume, continues; posts saved earlier are skipped without being requested (the list of them is `bulk-saved.txt` next to `gallery-archive.sqlite3`).
+- The row says "Instagram · @user · 12 of 50 posts": `files_done` / `files_total` count POSTS for a bulk item.
+
 ## Faster downloads (phase 12)
 - Settings > Downloads > "Faster downloads": **Auto** (default) | **Off**. Auto looks a link up once and reuses that lookup for the download (`--load-info-json`; if the reused media address has gone stale, one immediate re-run from the link). Off gives the plain command (look up again at download time). Never reused for media-engine links or signed-in Instagram/TikTok.
 - Audio presets copy the native stream when the site offers one (m4a, opus) instead of re-encoding.

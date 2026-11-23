@@ -60,12 +60,23 @@ __all__ = [
     "MediaProcess",
     "MediaUrl",
     "MediaUrlKind",
+    "BULK_SLEEP",
+    "BulkKind",
+    "BulkListing",
+    "BulkPost",
+    "BulkUrl",
     "MoveResult",
     "PlannedFile",
     "archive_key",
+    "build_bulk_probe_command",
     "build_command",
     "build_probe_command",
+    "bulk_key",
+    "classify_bulk_url",
     "classify_media_url",
+    "listing_info",
+    "parse_bulk",
+    "probe_bulk",
     "config_dict",
     "filename_format_for",
     "find_gallery_dl",
@@ -219,8 +230,12 @@ def route_for(url: str | None) -> str:
     * ``"ytdlp_then_media"`` - Instagram posts and single stories: yt-dlp first
       (a video works today), gallery-dl when yt-dlp says "no video in this
       post";
+    * ``"bulk"`` - a whole profile, ``/reels/``, ``/tagged/``, Saved or a TikTok
+      profile (brief 10G): many posts, always in slow mode;
     * ``"ytdlp"`` - everything else, reels and video links included.
     """
+    if classify_bulk_url(url) is not None:
+        return "bulk"
     kind = classify_media_url(url).kind
     if kind in (
         MediaUrlKind.STORIES_USER,
@@ -231,6 +246,134 @@ def route_for(url: str | None) -> str:
     if kind in (MediaUrlKind.POST, MediaUrlKind.STORY_ITEM):
         return "ytdlp_then_media"
     return "ytdlp"
+
+
+# -- bulk links: profiles, tabs, Saved (brief 10G) -------------------------
+class BulkKind(str, Enum):
+    """What a bulk link lists."""
+
+    PROFILE = "profile"  # instagram.com/<user>/
+    REELS = "reels"  # instagram.com/<user>/reels/
+    TAGGED = "tagged"  # instagram.com/<user>/tagged/
+    SAVED = "saved"  # instagram.com/<user>/saved/
+    SAVED_COLLECTION = "saved_collection"  # instagram.com/<user>/saved/<name>/<id>/
+    TIKTOK_PROFILE = "tiktok_profile"  # tiktok.com/@<user>
+
+
+# First path segments on instagram.com that are never a username.
+_INSTAGRAM_RESERVED = frozenset(
+    {
+        "about", "accounts", "ads", "api", "ar", "business", "challenge", "developers",
+        "direct", "directory", "download", "emails", "explore", "fxcal", "graphql",
+        "help", "legal", "lite", "locations", "login", "logout", "nametag",
+        "notifications", "oauth", "p", "press", "privacy", "reel", "reels", "session",
+        "settings", "shop", "static", "stories", "tags", "terms", "threads", "topics",
+        "tv", "web", "_u",
+    }
+)
+_IG_USER_RE = re.compile(r"^(?=.*[A-Za-z0-9])[A-Za-z0-9._]{1,30}$")
+_TT_USER_RE = re.compile(r"^(?=.*[A-Za-z0-9])[A-Za-z0-9._]{1,48}$")
+_COLLECTION_SEGMENT_RE = re.compile(r"^[^/\\\s]{1,100}$")
+
+
+@dataclass(frozen=True)
+class BulkUrl:
+    """A classified bulk link (a profile, a profile tab, Saved)."""
+
+    kind: BulkKind
+    site: str
+    username: str
+    collection: str | None = None  # "name/id" of a Saved collection
+
+    @property
+    def url(self) -> str:
+        """The canonical link gallery-dl is given."""
+        if self.site == "tiktok":
+            return f"https://www.tiktok.com/@{self.username}"
+        base = f"https://www.instagram.com/{self.username}/"
+        if self.kind is BulkKind.PROFILE:
+            return base
+        if self.kind is BulkKind.SAVED_COLLECTION:
+            return f"{base}saved/{self.collection}/"
+        return f"{base}{self.kind.value}/"
+
+    @property
+    def identity(self) -> str:
+        """One queue identity per list, whatever the spelling of the link."""
+        parts = ["bulk", self.site, self.username.lower(), self.kind.value]
+        if self.collection:
+            parts.append(self.collection.lower())
+        return ":".join(parts)
+
+    @property
+    def label(self) -> str:
+        return f"@{self.username}"
+
+    @property
+    def title(self) -> str:
+        who = self.label
+        return {
+            BulkKind.PROFILE: f"Posts from {who}",
+            BulkKind.REELS: f"Reels from {who}",
+            BulkKind.TAGGED: f"Posts tagging {who}",
+            BulkKind.SAVED: f"Saved posts of {who}",
+            BulkKind.SAVED_COLLECTION: f"Saved collection of {who}",
+            BulkKind.TIKTOK_PROFILE: f"Posts from {who}",
+        }[self.kind]
+
+
+def classify_bulk_url(url: str | None) -> BulkUrl | None:
+    """The bulk kind of *url*, or ``None`` when it is not a whole-list link.
+
+    A profile is never a post and a post is never a profile: ``/p/<code>``,
+    ``/reel/<code>``, ``/stories/...``, ``/explore/`` and the other reserved
+    paths are not bulk, and neither is ``/@user/video/<id>``. Trailing slashes,
+    query strings and ``www.`` / ``m.`` hosts do not matter. No network.
+    """
+    if not isinstance(url, str) or not url.strip():
+        return None
+    try:
+        normalised = normalize_url(url)
+    except ValueError:
+        return None
+    site = site_kind(normalised)
+    if site is None:
+        return None
+    try:
+        parts = urlsplit(normalised)
+        segments = [s for s in parts.path.split("/") if s]
+        host = (parts.hostname or "").lower()
+    except ValueError:
+        return None
+    if site == "tiktok":
+        if host != "tiktok.com" or len(segments) != 1:
+            return None
+        user = segments[0]
+        if not user.startswith("@") or not _TT_USER_RE.match(user[1:]):
+            return None
+        return BulkUrl(BulkKind.TIKTOK_PROFILE, "tiktok", user[1:])
+    if not segments or segments[0].lower() in _INSTAGRAM_RESERVED:
+        return None
+    user = segments[0]
+    if not _IG_USER_RE.match(user):
+        return None
+    if len(segments) == 1:
+        return BulkUrl(BulkKind.PROFILE, "instagram", user)
+    tab = segments[1].lower()
+    if len(segments) == 2 and tab in ("reels", "tagged", "saved"):
+        return BulkUrl(BulkKind(tab), "instagram", user)
+    if tab == "saved" and 3 <= len(segments) <= 4:
+        rest = segments[2:]
+        if all(_COLLECTION_SEGMENT_RE.match(seg) for seg in rest):
+            return BulkUrl(
+                BulkKind.SAVED_COLLECTION, "instagram", user, "/".join(rest)
+            )
+    return None
+
+
+def bulk_key(site: str | None, post_id: str) -> str:
+    """The key of a post saved by a bulk run: ``"instagram <shortcode>"``."""
+    return f"{(site or '').lower()} {post_id}"
 
 
 def filename_format_for(url: str | None) -> str:
@@ -251,8 +394,16 @@ def mix_key(site: str, post_id: str) -> str:
 
 
 # -- per-run config --------------------------------------------------------
-def config_dict() -> dict[str, Any]:
+# Brief 10G: bulk runs ask for one request every 4-10 s (randomised by gallery-dl).
+BULK_SLEEP: tuple[float, float] = (4.0, 10.0)
+
+
+def config_dict(bulk: bool = False) -> dict[str, Any]:
     """The gallery-dl config Elisium runs with.
+
+    *bulk* (brief 10G) adds ``sleep-request`` as a 4-10 s range, so requests are
+    randomised and spaced out. Nothing here ever raises concurrency: gallery-dl
+    fetches one file at a time and Elisium runs one post at a time.
 
     Instagram audio is off in gallery-dl by default; it is what carries the
     song of a photo post and story music stickers. TikTok photos and audio are
@@ -260,7 +411,7 @@ def config_dict() -> dict[str, Any]:
     format Elisium counts files from (one finished path per line, a skipped
     file with a leading ``# ``, full paths, no progress indicator).
     """
-    return {
+    config: dict[str, Any] = {
         "extractor": {
             "instagram": {"audio": True, "videos": True},
             "tiktok": {"audio": True, "photos": True, "videos": True},
@@ -272,9 +423,16 @@ def config_dict() -> dict[str, Any]:
             "progress": False,
         },
     }
+    if bulk:
+        sleep = list(BULK_SLEEP)
+        extractor = config["extractor"]
+        extractor["sleep-request"] = sleep
+        extractor["instagram"]["sleep-request"] = list(sleep)
+        extractor["tiktok"]["sleep-request"] = list(sleep)
+    return config
 
 
-def write_config(path: str | os.PathLike[str]) -> Path:
+def write_config(path: str | os.PathLike[str], *, bulk: bool = False) -> Path:
     """Write :func:`config_dict` to *path* (mode 0600) and return the path.
 
     Written to a fresh sibling file and renamed into place, so two runs
@@ -294,7 +452,7 @@ def write_config(path: str | os.PathLike[str]) -> Path:
     fd = os.open(scratch, flags, 0o600)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            json.dump(config_dict(), stream, indent=2)
+            json.dump(config_dict(bulk), stream, indent=2)
         os.replace(scratch, target)
     except BaseException:
         try:
@@ -688,6 +846,234 @@ def probe(
         elif result.returncode == 0:
             info = NO_MEDIA_FILES
     raise MediaProbeError(info, raw)
+
+
+# -- bulk probe: list a profile's posts without downloading (brief 10G) -----
+@dataclass(frozen=True)
+class BulkPost:
+    """One post of a bulk listing: where to fetch it and what it holds."""
+
+    id: str
+    url: str
+    site: str | None = None
+    owner: str | None = None
+    date: str | None = None
+    title: str | None = None
+    files: tuple[PlannedFile, ...] = ()
+    thumbnail: str | None = None
+
+    @property
+    def plan(self) -> MediaPlan:
+        return MediaPlan(
+            site=self.site,
+            files=self.files,
+            owner=self.owner,
+            post_id=self.id,
+            shortcode=self.id,
+            date=self.date,
+            title=self.title,
+            thumbnail=self.thumbnail,
+        )
+
+    @property
+    def label(self) -> str:
+        """A picker line: ``2026-11-02 · Fresh loaves · 3 photos``."""
+        day = (self.date or "")[:10]
+        parts = [day, self.title or self.id, self.plan.format_label or ""]
+        return " · ".join(p for p in parts if p)
+
+    def to_entry(self) -> dict[str, Any]:
+        """The playlist-shaped dict the picker shows (round-trips with :meth:`from_entry`)."""
+        return {
+            "id": self.id,
+            "title": self.label,
+            "url": self.url,
+            "duration": None,
+            "site": self.site,
+            "owner": self.owner,
+            "date": self.date,
+            "caption": self.title,
+            "thumbnail": self.thumbnail,
+            "files": [[f.kind, f.media_id, f.num, f.ext] for f in self.files],
+        }
+
+    @staticmethod
+    def from_entry(entry: Mapping[str, Any]) -> "BulkPost | None":
+        """Rebuild a post from a picker entry; ``None`` when it has no id or link."""
+        ident = _string(entry.get("id"))
+        link = entry.get("url")
+        if ident is None or not isinstance(link, str) or not link.startswith(("http://", "https://")):
+            return None
+        files: list[PlannedFile] = []
+        for row in entry.get("files") or ():
+            try:
+                kind, media_id, num, ext = row
+                files.append(PlannedFile(str(kind), str(media_id), int(num), str(ext)))
+            except (TypeError, ValueError):
+                continue
+        site = entry.get("site")
+        return BulkPost(
+            id=ident,
+            url=link,
+            site=site if isinstance(site, str) else None,
+            owner=_string(entry.get("owner")),
+            date=_string(entry.get("date")),
+            title=_string(entry.get("caption")),
+            files=tuple(files),
+            thumbnail=_string(entry.get("thumbnail")),
+        )
+
+
+@dataclass(frozen=True)
+class BulkListing:
+    """The posts a bulk probe found, newest first (never more than the probe's limit)."""
+
+    posts: tuple[BulkPost, ...]
+
+
+def build_bulk_probe_command(
+    url: str,
+    gallery_dl: str = "gallery-dl",
+    *,
+    config_path: str | os.PathLike[str],
+    limit: int,
+    cookies_browser: str | None = None,
+    cookies_file: str | os.PathLike[str] | None = None,
+) -> list[str]:
+    """``gallery-dl ... -s -j --post-range 1-<limit> <url>``: list, never download."""
+    argv = _base(gallery_dl, config_path)
+    argv.extend(["-s", "-j", "--post-range", f"1-{max(int(limit), 1)}"])
+    argv.extend(runner._cookie_args(cookies_browser, cookies_file))
+    argv.append(url)
+    return argv
+
+
+def _post_link(site: str | None, plan: MediaPlan, owner: str | None) -> tuple[str | None, str | None]:
+    """``(post id, link)`` for one planned post, or ``(None, None)``."""
+    if site == "tiktok":
+        ident = plan.post_id
+        if ident and owner:
+            return ident, f"https://www.tiktok.com/@{owner}/video/{ident}"
+        return None, None
+    code = plan.shortcode
+    if code and _SHORTCODE_RE.match(code):
+        return code, f"https://www.instagram.com/p/{code}/"
+    return None, None
+
+
+def parse_bulk(text: str, url: str | None = None) -> tuple[BulkPost, ...]:
+    """Group ``gallery-dl -j`` output into posts, in the order gallery-dl listed them.
+
+    A file belongs to the post named by its ``post_shortcode`` / ``shortcode``
+    (Instagram) or ``id`` (TikTok). Files without one are left out: Elisium
+    could not fetch that post on its own.
+    """
+    site_hint = site_kind(url) if isinstance(url, str) else None
+    groups: dict[str, list[Any]] = {}
+    directory: Any = None
+    for message in _messages(text or ""):
+        kind = message[0]
+        if kind == 2 and len(message) >= 2 and isinstance(message[1], Mapping):
+            directory = message
+            continue
+        if kind != 3 or len(message) < 3 or not isinstance(message[2], Mapping):
+            continue
+        meta = message[2]
+        dir_meta = directory[1] if directory is not None else {}
+        category = _string(meta.get("category")) or site_hint
+        if category == "tiktok":
+            ident = _string(meta.get("id"))
+        else:
+            ident = _first([meta, dir_meta], "post_shortcode", "shortcode")
+        if ident is None:
+            continue
+        group = groups.get(ident)
+        if group is None:
+            group = groups[ident] = [directory] if directory is not None else []
+        group.append(message)
+    posts: list[BulkPost] = []
+    for group in groups.values():
+        plan = parse_probe(json.dumps(group), url)
+        site = plan.site or site_hint
+        owner = plan.owner
+        ident, link = _post_link(site, plan, owner)
+        if ident is None or link is None:
+            continue
+        posts.append(
+            BulkPost(
+                id=ident,
+                url=link,
+                site=site,
+                owner=owner,
+                date=plan.date,
+                title=plan.title,
+                files=plan.files,
+                thumbnail=plan.thumbnail,
+            )
+        )
+    return tuple(posts)
+
+
+def probe_bulk(
+    url: str,
+    gallery_dl: str = "gallery-dl",
+    *,
+    config_path: str | os.PathLike[str],
+    limit: int,
+    cookies_browser: str | None = None,
+    cookies_file: str | os.PathLike[str] | None = None,
+    timeout: float | None = 900.0,
+) -> BulkListing:
+    """List up to *limit* posts of a bulk link (``-s -j --post-range 1-<limit>``).
+
+    Callers pass the run cap + 1, so they can tell "there are more" without
+    reading a whole account. The slow mode config (4-10 s between requests)
+    applies to the listing too. The result is cut to *limit* even when
+    gallery-dl returned more. Raises :class:`MediaProbeError` like :func:`probe`.
+    """
+    if not isinstance(url, str) or not url.strip():
+        raise ValueError("url must be a non-empty string")
+    has_cookies = bool(cookies_browser or cookies_file)
+    argv = build_bulk_probe_command(
+        url,
+        gallery_dl,
+        config_path=config_path,
+        limit=limit,
+        cookies_browser=cookies_browser,
+        cookies_file=cookies_file,
+    )
+    try:
+        result = subprocess.run(
+            argv, capture_output=True, text=True, timeout=timeout, check=False
+        )
+    except OSError as exc:
+        raise MediaProbeError(GALLERY_DL_MISSING, str(exc)) from exc
+    except subprocess.TimeoutExpired as exc:
+        raw = _text(exc.stdout) + _text(exc.stderr)
+        raise MediaProbeError(
+            explain_gallery("timed out", url, has_cookies), raw or str(exc)
+        ) from exc
+    stdout, stderr = result.stdout or "", result.stderr or ""
+    posts = parse_bulk(stdout, url)[: max(int(limit), 1)]
+    if posts:
+        return BulkListing(posts)
+    raw = f"{stdout}{stderr}"
+    info = explain_gallery(raw, url, has_cookies)
+    if info.code == "unknown" and result.returncode == 0:
+        info = NO_MEDIA_FILES
+    raise MediaProbeError(info, raw)
+
+
+def listing_info(
+    listing: BulkListing, bulk: BulkUrl | None, cap: int
+) -> dict[str, Any]:
+    """A yt-dlp-shaped playlist dict (``title`` + ``entries``) for the picker."""
+    return {
+        "title": bulk.title if bulk is not None else "Posts",
+        "bulk": True,
+        "cap": cap,
+        "entries": [post.to_entry() for post in listing.posts],
+    }
 
 
 # -- what is already saved ----------------------------------------------------

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import threading
 import time
 from dataclasses import dataclass
@@ -37,8 +38,10 @@ from .errors import (
     GALLERY_DL_MISSING,
     ErrorInfo,
     apply_context,
+    bulk_stop_note,
     explain,
     explain_gallery,
+    is_slow_down,
 )
 from .history import History, TERMINAL_STATES
 from .urlnorm import normalize_url, video_key
@@ -55,6 +58,9 @@ __all__ = [
     "ALREADY_SAVED_NOTE",
     "PHOTO_MODES",
     "SONG_LENGTHS",
+    "BULK_DEFAULT_MAX_POSTS",
+    "BULK_MAX_POSTS_LIMIT",
+    "clamp_bulk_max",
     "SPEED_EMA_ALPHA",
     "SPEED_EMA_WARMUP",
     "QueueItem",
@@ -106,6 +112,21 @@ ALREADY_SAVED_NOTE = "Already saved"
 # song / the photos only. "Song length": the part the post plays / the whole song.
 PHOTO_MODES: tuple[str, ...] = ("video", "song", "photos")
 SONG_LENGTHS: tuple[str, ...] = ("snippet", "full")
+# Brief 10G: "Most posts per bulk save" (profile, tab, Saved): default and hard limit.
+BULK_DEFAULT_MAX_POSTS = 50
+BULK_MAX_POSTS_LIMIT = 200
+# A bulk run gives up (the item fails) after this many posts in a row fail for
+# a reason that is not the site slowing us down.
+_BULK_MAX_FAILURES_IN_ROW = 3
+
+
+def clamp_bulk_max(value: object) -> int:
+    """*value* as a whole number from 1 to 200; anything else is the default (50)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value:
+        return BULK_DEFAULT_MAX_POSTS
+    return max(1, min(BULK_MAX_POSTS_LIMIT, int(value)))
+
+
 # yt-dlp prints this and exits 0 when the archive already holds the video.
 _ARCHIVE_SKIP_TEXT = "has already been recorded in the archive"
 
@@ -276,7 +297,7 @@ def may_reuse_probe(
     Never for a media-engine link, never for a signed-in Instagram / TikTok
     link, and never for a site that already answered 429 this session.
     """
-    if not enabled or media.route_for(url) == "media":
+    if not enabled or media.route_for(url) in ("media", "bulk"):
         return False
     site = site_key(url)
     if site in limited_sites:
@@ -384,6 +405,10 @@ class QueueItem:
     format_label: str | None = None
     # "Download again anyway": run the media engine without its archive.
     force: bool = False
+    # Brief 10G: a whole profile / tab / Saved list saved one post at a time.
+    # ``files_done`` / ``files_total`` then count POSTS (the row's headline).
+    bulk: media.BulkUrl | None = None
+    bulk_posts: tuple[media.BulkPost, ...] = ()
     # Brief 12C: why the item may be slow to start ("signing_in", "network",
     # "rate_limited", or None) and the speed average (not in the snapshot).
     wait_hint: str | None = None
@@ -405,6 +430,13 @@ class QueueItem:
             "note": self.note,
             "thumbnail": self.thumbnail,
             "format_label": self.format_label,
+            "bulk": None
+            if self.bulk is None
+            else {
+                "kind": self.bulk.kind.value,
+                "site": self.bulk.site,
+                "label": self.bulk.label,
+            },
             "wait_hint": self.wait_hint,
             "attempts": self.attempts,
             "error": None
@@ -462,6 +494,9 @@ class DownloadQueue:
         run_media: Callable[..., Any] = media.run,
         gallery_config: str | os.PathLike[str] | None = None,
         gallery_archive: str | os.PathLike[str] | None = None,
+        probe_bulk: Callable[..., media.BulkListing] = media.probe_bulk,
+        bulk_delay: Callable[[], float] | None = None,
+        bulk_max_posts: int = BULK_DEFAULT_MAX_POSTS,
         ffmpeg: str | None = None,
         ffprobe: str | None = None,
     ) -> None:
@@ -501,6 +536,15 @@ class DownloadQueue:
             if gallery_archive is not None
             else self.archive.path.parent / "gallery-archive.sqlite3"
         ).expanduser()
+        # Brief 10G: bulk saves. Their own config (it carries the 4-10 s request
+        # sleep), the list of posts already saved by a bulk run (next to
+        # gallery-archive.sqlite3) and the pause between two posts.
+        self._probe_bulk = probe_bulk
+        self._bulk_delay = bulk_delay or (lambda: random.uniform(*media.BULK_SLEEP))
+        self._bulk_max = clamp_bulk_max(bulk_max_posts)
+        self._gallery_bulk_config = self._gallery_config.with_name("gallery-dl-bulk.json")
+        self._bulk_saved_path = self._gallery_archive.with_name("bulk-saved.txt")
+        self._bulk_lock = threading.Lock()
         # Brief 10B-2: song snippet + photo/song video; ``None`` = look up on PATH.
         self._ffmpeg = ffmpeg
         self._ffprobe = ffprobe
@@ -568,6 +612,15 @@ class DownloadQueue:
         with self._cond:
             return frozenset(self._limited_sites)
 
+    @property
+    def bulk_max_posts(self) -> int:
+        return self._bulk_max
+
+    def set_bulk_max_posts(self, value: int) -> None:
+        """"Most posts per bulk save": clamped to 1-200, applies to runs that start later."""
+        with self._cond:
+            self._bulk_max = clamp_bulk_max(value)
+
     def set_photo_mode(self, mode: str) -> None:
         """"video" (photos, song and video), "song" (photos and song) or "photos".
 
@@ -629,12 +682,47 @@ class DownloadQueue:
         """
         with self._cond:
             browser, file = self._cookies_browser, self._cookies_file
+            cap = self._bulk_max
+        bulk = media.classify_bulk_url(url)
+        if bulk is not None:
+            return self._probe_bulk_listing(bulk, cap, browser, file)
         return self._probe_url(
             url,
             self._ytdlp,
             cookies_browser=browser,
             cookies_file=file,
         )
+
+    def _probe_bulk_listing(
+        self,
+        bulk: media.BulkUrl,
+        cap: int,
+        browser: str | None,
+        cookie_file: str | None,
+    ) -> dict[str, Any]:
+        """The count probe for a bulk link: a playlist-shaped dict of up to ``cap + 1`` posts.
+
+        Lists without downloading, in slow mode, and never reads more than the
+        run cap + 1 posts. Raises :class:`runner.ProbeError` on failure.
+        """
+        binary = self._gallery_dl or media.find_gallery_dl()
+        if not binary:
+            raise runner.ProbeError(GALLERY_DL_MISSING, "gallery-dl is missing")
+        try:
+            config = media.write_config(self._gallery_bulk_config, bulk=True)
+            listing = self._probe_bulk(
+                bulk.url,
+                binary,
+                config_path=config,
+                limit=cap + 1,
+                cookies_browser=browser,
+                cookies_file=cookie_file,
+            )
+        except media.MediaProbeError as exc:
+            raise runner.ProbeError(exc.info, exc.raw) from exc
+        except OSError as exc:
+            raise runner.ProbeError(GALLERY_DL_MISSING, str(exc)) from exc
+        return media.listing_info(listing, bulk, cap)
 
     def items(self) -> list[dict[str, Any]]:
         """Every item, oldest first, as snapshots."""
@@ -686,6 +774,8 @@ class DownloadQueue:
         if not isinstance(url, str) or not url.strip():
             raise ValueError("url must be a non-empty string")
         clean = url.strip()
+        if media.classify_bulk_url(clean) is not None:
+            return self.add_bulk(clean, title=title)
         normalised = normalize_url(clean)
         key = video_key(clean)
         identity = key or normalised
@@ -697,7 +787,7 @@ class DownloadQueue:
                 if (
                     force
                     and found.state in TERMINAL_STATES
-                    and media.route_for(found.url) != "ytdlp"
+                    and media.route_for(found.url) not in ("ytdlp", "bulk")
                 ):
                     found.force = True
                     self._requeue_missing(found)
@@ -726,6 +816,83 @@ class DownloadQueue:
             self._cond.notify_all()
             self._emit({"type": "added", "item": snapshot})
         return snapshot
+
+    def add_bulk(
+        self,
+        url: str,
+        posts: Sequence[Any] | None = None,
+        *,
+        title: str | None = None,
+    ) -> dict[str, Any]:
+        """Queue a whole profile, tab, Saved list or TikTok profile as ONE item.
+
+        *posts* are the posts the picker chose (:class:`media.BulkPost` or the
+        picker's entry dicts), cut to the run cap. Without them the run lists
+        the newest posts itself. Adding the same list again resumes it: an item
+        that is paused, failed, cancelled or finished goes back to the queue,
+        and posts already saved are skipped without being requested.
+
+        Raises ``ValueError`` when *url* is not a bulk link.
+        """
+        bulk = media.classify_bulk_url(url)
+        if bulk is None:
+            raise ValueError("not a profile, tab or Saved link")
+        chosen: tuple[media.BulkPost, ...] | None = None
+        if posts is not None:
+            built = [
+                p
+                if isinstance(p, media.BulkPost)
+                else media.BulkPost.from_entry(p)
+                if isinstance(p, Mapping)
+                else None
+                for p in posts
+            ]
+            chosen = tuple(p for p in built if p is not None)
+        identity = bulk.identity
+        with self._cond:
+            existing = self._by_identity.get(identity)
+            if existing is not None:
+                found = self._items[existing]
+                if found.state in ("done", "skipped", "failed", "cancelled", "paused"):
+                    if chosen is not None:
+                        found.bulk_posts = chosen
+                    elif found.state in ("done", "skipped"):
+                        found.bulk_posts = ()
+                    self._requeue_bulk(found)
+                elif found.state == "queued" and chosen is not None:
+                    found.bulk_posts = chosen
+                return found.snapshot()
+            record_id = self.history.add(bulk.url, video_key=identity, state="queued")
+            item = QueueItem(
+                id=self._next_id,
+                record_id=record_id,
+                url=bulk.url,
+                identity=identity,
+                video_key=None,
+                title=title.strip() if isinstance(title, str) and title.strip() else bulk.title,
+                bulk=bulk,
+                bulk_posts=chosen or (),
+            )
+            self._next_id += 1
+            self._items[item.id] = item
+            self._order.append(item.id)
+            self._by_identity[identity] = item.id
+            snapshot = item.snapshot()
+            self._cond.notify_all()
+            self._emit({"type": "added", "item": snapshot})
+        return snapshot
+
+    def _requeue_bulk(self, item: QueueItem) -> None:
+        """Put a stopped or finished bulk item back to ``queued`` (caller holds the lock)."""
+        item.error = None
+        item.attempts = 0
+        item.percent = None
+        item.stage = None
+        item.note = None
+        item.files_done = None
+        item.files_total = None
+        self._set_state(item, "queued", clear_error=True)
+        self._cond.notify_all()
 
     def _file_present(self, item: QueueItem) -> bool:
         """False only when we can tell the finished file is gone.
@@ -948,9 +1115,21 @@ class DownloadQueue:
 
     def _next_queued(self) -> QueueItem | None:
         running: list[str] | None = None
+        owned = [i for i in self._items.values() if i.owned]
+        signed_in = self._cookies_browser or self._cookies_file
         for item_id in self._order:
             item = self._items[item_id]
             if item.state == "queued" and not item.owned:
+                if item.bulk is not None:
+                    # A bulk save never runs next to another Instagram / TikTok item.
+                    if any(site_key(o.url) in _SIGNED_IN_SITES for o in owned):
+                        continue
+                elif (
+                    signed_in
+                    and site_key(item.url) in _SIGNED_IN_SITES
+                    and any(o.bulk is not None for o in owned)
+                ):
+                    continue  # ... and nothing signed-in starts beside a bulk save
                 if self._limited_sites:
                     if running is None:
                         running = [site_key(i.url) for i in self._items.values() if i.owned]
@@ -1057,7 +1236,9 @@ class DownloadQueue:
             self._set_state(item, "probing")
 
         route = media.route_for(item.url)
-        if route == "media":
+        if route == "bulk" and item.bulk is not None:
+            error = self._bulk_attempt(item)
+        elif route == "media":
             error = self._media_attempt(item)
         else:
             error = self._ytdlp_attempt(item)
@@ -1442,7 +1623,7 @@ class DownloadQueue:
         return explain_gallery(raw, item.url, has_cookies)
 
     def _media_run(
-        self, item: QueueItem, opts: media.MediaOptions
+        self, item: QueueItem, opts: media.MediaOptions, *, per_file: bool = True
     ) -> tuple[str, int | None, bool, list[str]] | None:
         """One gallery-dl run: ``(raw log, exit code, terminated, finished paths)``.
 
@@ -1451,10 +1632,12 @@ class DownloadQueue:
         cannot be started.
         """
         self._gallery_archive.parent.mkdir(parents=True, exist_ok=True)
+        # A bulk run's headline counts posts, so the file count inside one post
+        # (per_file=False) never reaches the item.
         handle = self._run_media(
             opts,
-            lambda event: self._on_progress(item, event),
-            files_total=item.files_total,
+            (lambda event: self._on_progress(item, event)) if per_file else (lambda event: None),
+            files_total=item.files_total if per_file else None,
         )
         with self._cond:
             item.handle = handle
@@ -1568,6 +1751,263 @@ class DownloadQueue:
             elif not mix_post and result.video is not None:
                 item.files_total = (item.files_total or plan.total) + 1
         return False
+
+    # -- internals: bulk saves (brief 10G) --------------------------------
+    def _bulk_saved_keys(self) -> set[str]:
+        with self._bulk_lock:
+            try:
+                text = self._bulk_saved_path.read_text(encoding="utf-8")
+            except OSError:
+                return set()
+        return {line.strip() for line in text.splitlines() if line.strip()}
+
+    def _bulk_record(self, key: str) -> None:
+        with self._bulk_lock:
+            try:
+                self._bulk_saved_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(self._bulk_saved_path, "a", encoding="utf-8") as stream:
+                    stream.write(key + "\n")
+            except OSError:
+                pass  # worst case the post is requested again; gallery-dl's archive skips its files
+
+    def _bulk_wait(self, item: QueueItem) -> bool:
+        """Sleep the randomised 4-10 s between two posts; ``False`` when stopped meanwhile."""
+        try:
+            delay = max(0.0, float(self._bulk_delay()))
+        except (TypeError, ValueError):
+            delay = media.BULK_SLEEP[1]
+        deadline = time.monotonic() + delay
+        with self._cond:
+            while True:
+                if not self._running or item.state not in DOWNLOADING_STATES:
+                    return False
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return True
+                self._cond.wait(remaining)
+
+    def _bulk_progress(self, item: QueueItem, done: int, total: int) -> None:
+        with self._cond:
+            if item.state not in DOWNLOADING_STATES:
+                return
+            item.files_done = done
+            item.files_total = total
+            item.stage = "downloading"
+            item.percent = round(min(done / total, 1.0) * 100.0, 1) if total else None
+            self._emit(
+                {"type": "progress", "id": item.id, "state": item.state, "item": item.snapshot()}
+            )
+
+    def _bulk_slow_down(self, item: QueueItem, saved: int) -> None:
+        """End the run cleanly: ``paused`` with the plain note; everything saved stays."""
+        with self._cond:
+            if item.state in TERMINAL_STATES or item.state == "paused":
+                return
+            self._limited_sites.add(site_key(item.url))
+            item.error = None
+            item.note = bulk_stop_note(item.bulk.site if item.bulk else None, saved)
+            self._set_state(item, "paused")
+
+    def _bulk_attempt(self, item: QueueItem) -> ErrorInfo | None:
+        """Save a profile / tab / Saved list one post at a time, slowly (state ``probing``).
+
+        Returns ``None`` when handled (done, skipped, paused by the user or by
+        the site asking us to slow down, cancelled) and the plain-language
+        failure otherwise. Every finished post is moved to its owner's folder
+        at once, so nothing is lost when the run stops.
+        """
+        bulk = item.bulk
+        binary = self._gallery_dl or media.find_gallery_dl()
+        if bulk is None:
+            return _UNKNOWN
+        if not binary:
+            return GALLERY_DL_MISSING
+        with self._cond:
+            browser, cookie_file = self._cookies_browser, self._cookies_file
+            limit = self._limit_rate
+            photo_mode, song_length = self._photo_mode, self._song_length
+            cap = self._bulk_max
+            chosen = list(item.bulk_posts)
+        has_cookies = bool(browser or cookie_file)
+        try:
+            config = media.write_config(self._gallery_bulk_config, bulk=True)
+        except OSError:
+            return _UNKNOWN
+        probed = False
+        if not chosen:
+            try:
+                listing = self._probe_bulk(
+                    bulk.url,
+                    binary,
+                    config_path=config,
+                    limit=cap + 1,
+                    cookies_browser=browser,
+                    cookies_file=cookie_file,
+                )
+            except media.MediaProbeError as exc:
+                if is_slow_down(exc.raw) or is_rate_limit_error(exc.info):
+                    self._bulk_slow_down(item, 0)
+                    return None
+                return exc.info
+            except OSError:
+                return GALLERY_DL_MISSING
+            chosen = list(listing.posts)
+            probed = True
+        posts = chosen[:cap]  # never more than the cap, whatever was picked
+        if not posts:
+            return media.NO_MEDIA_FILES
+        total = len(posts)
+        with self._cond:
+            if not self._running or item.state != "probing":
+                return None  # paused or cancelled while listing
+            item.files_done = 0
+            item.files_total = total
+            item.thumbnail = next((p.thumbnail for p in posts if p.thumbnail), item.thumbnail)
+            self._emit({"type": "item", "id": item.id, "item": item.snapshot()})
+            self._set_state(item, "downloading")
+
+        saved_keys = self._bulk_saved_keys()
+        done = fresh = failed = in_row = 0
+        first_path: str | None = None
+        last_error: ErrorInfo | None = None
+        pause_first = probed
+        for post in posts:
+            with self._cond:
+                if not self._running or item.state not in DOWNLOADING_STATES:
+                    return None
+            site = post.site or bulk.site
+            key = media.bulk_key(site, post.id)
+            if key in saved_keys:
+                done += 1  # saved by an earlier run: not requested again
+                self._bulk_progress(item, done, total)
+                continue
+            if pause_first and not self._bulk_wait(item):
+                return None
+            pause_first = True
+            status, path, error = self._bulk_post(
+                item, post, bulk, binary, config, limit, browser, cookie_file,
+                photo_mode, song_length, has_cookies, done,
+            )
+            if status == "paused":
+                return None
+            if status == "slow":
+                self._bulk_slow_down(item, done)
+                return None
+            if status == "failed":
+                failed += 1
+                in_row += 1
+                last_error = error
+                if in_row >= _BULK_MAX_FAILURES_IN_ROW:
+                    return error
+                continue
+            in_row = 0
+            fresh += 1
+            done += 1
+            saved_keys.add(key)
+            self._bulk_record(key)
+            first_path = first_path or path
+            self._bulk_progress(item, done, total)
+
+        if done == 0 and failed:
+            return last_error or _UNKNOWN
+        with self._cond:
+            if item.state not in DOWNLOADING_STATES:
+                return None
+            item.file_path = first_path
+            item.files_done = done
+            if failed:
+                item.note = (
+                    f"Saved {done} of {total} posts. "
+                    f"{failed} could not be saved; add the link again to retry them."
+                )
+            if fresh == 0 and not failed:
+                item.percent = 100.0
+                item.error = ALREADY_DOWNLOADED
+                item.note = ALREADY_SAVED_NOTE
+                self._set_state(item, "skipped", error=ALREADY_DOWNLOADED)
+            else:
+                item.percent = round(done / total * 100.0, 1) if failed else 100.0
+                self._set_state(item, "done", file_path=first_path)
+        return None
+
+    def _bulk_post(
+        self,
+        item: QueueItem,
+        post: media.BulkPost,
+        bulk: media.BulkUrl,
+        binary: str,
+        config: Path,
+        limit: str | None,
+        browser: str | None,
+        cookie_file: str | None,
+        photo_mode: str,
+        song_length: str,
+        has_cookies: bool,
+        saved_so_far: int,
+    ) -> tuple[str, str | None, ErrorInfo | None]:
+        """Run gallery-dl on ONE post: ``(status, first moved path, error)``.
+
+        Status is ``ok``, ``paused`` (the user paused or cancelled), ``slow``
+        (the site asked us to slow down) or ``failed`` (this post only).
+        """
+        directory = media.item_directory(self.temp_dir, f"{item.identity}|{post.id}")
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return "failed", None, _UNKNOWN
+        keep_owner = bulk.kind in (
+            media.BulkKind.PROFILE,
+            media.BulkKind.REELS,
+            media.BulkKind.TIKTOK_PROFILE,
+        )
+        owner = post.owner or (bulk.username if keep_owner else None)
+        opts = media.MediaOptions(
+            url=post.url,
+            directory=directory,
+            config_path=config,
+            archive_path=self._gallery_archive,
+            gallery_dl=str(binary),
+            limit_rate=limit,
+            cookies_browser=browser,
+            cookies_file=cookie_file,
+        )
+        try:
+            run = self._media_run(item, opts, per_file=False)
+        except OSError:
+            return "failed", None, GALLERY_DL_MISSING
+        if run is None:
+            return "paused", None, None
+        raw, returncode, terminated, _finished = run
+        succeeded = returncode == 0 and not terminated
+        if succeeded:
+            folder = media.safe_folder_name(owner)
+            existing = self.output_dir / folder if folder else self.output_dir
+            try:
+                mix.process_staging(
+                    directory,
+                    post_id=post.id,
+                    site=post.site or bulk.site,
+                    existing_dir=existing,
+                    ffmpeg=self._ffmpeg,
+                    ffprobe=self._ffprobe,
+                    make_video=photo_mode == "video",
+                    keep_song=photo_mode != "photos",
+                    cut_song=song_length != "full",
+                )
+            except Exception:  # an extra must never fail a save
+                pass
+        # Whatever finished is moved now, even after a failure.
+        moved = media.finalize(directory, self.output_dir, owner)
+        first = None if moved.first is None else str(moved.first)
+        if succeeded:
+            return "ok", first, None
+        info = explain_gallery(raw, post.url, has_cookies)
+        challenged = info.code in ("login_required", "session_expired") and (
+            has_cookies or saved_so_far > 0
+        )
+        if is_slow_down(raw) or is_rate_limit_error(info) or challenged:
+            return "slow", first, info
+        return "failed", first, info
 
     @staticmethod
     def _read_path_file(path_file: Path) -> str | None:

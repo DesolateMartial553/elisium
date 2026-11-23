@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from elisium_downloader.engine.presets import PRESETS
-from elisium_downloader.engine.queue import MAX_CONCURRENCY, DownloadQueue
+from elisium_downloader.engine.queue import BULK_MAX_POSTS_LIMIT, MAX_CONCURRENCY, DownloadQueue
 
 from . import settings as settings_mod
 from .settings import Settings
@@ -315,7 +315,16 @@ class SettingsPage(QWidget):
         faster = _SettingRow("Faster downloads",
                              self._helper("Auto looks each link up once. Turn off if downloads fail."),
                              [self.faster_combo], self.faster_combo)
-        group("Downloads", [parallel, speed, quality, faster])
+        self.bulk_spin = QSpinBox()
+        self.bulk_spin.setRange(1, BULK_MAX_POSTS_LIMIT)
+        self._pad_spin(self.bulk_spin)
+        self._describe(self.bulk_spin, "Most posts per bulk save",
+                       "The most posts one profile, tab or Saved link saves in one go, "
+                       "from 1 to 200. Elisium always saves them one at a time, slowly.")
+        bulk = _SettingRow("Most posts per bulk save",
+                           self._helper("Saved slowly, one post at a time, from 1 to 200"),
+                           [self.bulk_spin], self.bulk_spin)
+        group("Downloads", [parallel, speed, quality, faster, bulk])
 
         # -- Photos and music ----------------------------------------------
         self.photo_mode_combo = QComboBox()
@@ -338,6 +347,7 @@ class SettingsPage(QWidget):
         song_length = _SettingRow("Song length", self._helper("Only the part the post plays, or all of it"),
                                   [self.song_length_combo], self.song_length_combo, rule=False)
         group("Photos and music", [photo_mode, song_length])
+
 
         # -- Accounts ------------------------------------------------------
         self.detect_label = _WrapLabel("")
@@ -461,6 +471,7 @@ class SettingsPage(QWidget):
             self.preset_combo.currentIndexChanged, self.faster_combo.currentIndexChanged,
             self.cookies_combo.currentIndexChanged,
             self.photo_mode_combo.currentIndexChanged, self.song_length_combo.currentIndexChanged,
+            self.bulk_spin.valueChanged,
             self.notify_check.toggled,
             self.tray_check.toggled, self.appearance_combo.currentIndexChanged,
             self.motion_check.toggled,
@@ -477,7 +488,8 @@ class SettingsPage(QWidget):
         self.setTabOrder(self.limit_spin, self.limit_unit)
         self.setTabOrder(self.limit_unit, self.preset_combo)
         self.setTabOrder(self.preset_combo, self.faster_combo)
-        self.setTabOrder(self.faster_combo, self.photo_mode_combo)
+        self.setTabOrder(self.faster_combo, self.bulk_spin)
+        self.setTabOrder(self.bulk_spin, self.photo_mode_combo)
         self.setTabOrder(self.photo_mode_combo, self.song_length_combo)
         self.setTabOrder(self.song_length_combo, self.detect_button)
         self.setTabOrder(self.detect_button, self.cookies_combo)
@@ -530,7 +542,8 @@ class SettingsPage(QWidget):
     def _fit_to_font(self) -> None:
         """Give the number boxes room for their digits and arrows at any text size."""
         fm = self.fontMetrics()
-        for spin, sample in ((self.concurrency_spin, "00"), (self.limit_spin, "00000.0")):
+        for spin, sample in ((self.concurrency_spin, "00"), (self.limit_spin, "00000.0"),
+                             (self.bulk_spin, "000")):
             spin.setMinimumWidth(fm.horizontalAdvance(sample) + 120)
             # The style sheet's fixed min-height must not squeeze the number field at big text.
             spin.setMinimumHeight(max(42, spin.lineEdit().minimumSizeHint().height() + 8))
@@ -560,6 +573,7 @@ class SettingsPage(QWidget):
         self.faster_combo.setCurrentIndex(max(0, self.faster_combo.findData(s.faster_downloads)))
         self.photo_mode_combo.setCurrentIndex(max(0, self.photo_mode_combo.findData(s.photo_mode)))
         self.song_length_combo.setCurrentIndex(max(0, self.song_length_combo.findData(s.song_length)))
+        self.bulk_spin.setValue(s.bulk_max_posts)
         self.cookies_combo.setCurrentIndex(max(0, self.cookies_combo.findData(s.cookies_browser)))
         self.cookies_file_edit.setText(s.cookies_file or "")
         self.cookies_file_edit.setToolTip(s.cookies_file or "")
@@ -596,6 +610,8 @@ class SettingsPage(QWidget):
             photo_mode=self.photo_mode_combo.currentData(),
             song_length=self.song_length_combo.currentData(),
             faster_downloads=self.faster_combo.currentData(),
+            bulk_max_posts=self.bulk_spin.value(),
+            bulk_warning_seen=self.settings.bulk_warning_seen,
         )
         if self.path is not None:
             try:

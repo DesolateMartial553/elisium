@@ -12,8 +12,10 @@ from pathlib import Path
 from elisium_downloader.engine import paths
 from elisium_downloader.engine.presets import DEFAULT_ID, PRESETS, get
 from elisium_downloader.engine.queue import (
+    BULK_DEFAULT_MAX_POSTS,
     DEFAULT_CONCURRENCY,
     MAX_CONCURRENCY,
+    clamp_bulk_max,
     PHOTO_MODES,
     SONG_LENGTHS,
     DownloadQueue,
@@ -94,6 +96,10 @@ class Settings:
     # Brief 12C: "auto" looks each link up once and reuses that lookup for the
     # download (reuse_probe); "off" is the old two-step way.
     faster_downloads: str = "auto"
+    # Brief 10G: bulk saves (a whole profile, a tab, Saved). "Most posts per bulk
+    # save" is clamped to 1-200; the one-time warning is shown once, then remembered.
+    bulk_max_posts: int = BULK_DEFAULT_MAX_POSTS
+    bulk_warning_seen: bool = False
 
     def __post_init__(self) -> None:
         self.validate()
@@ -122,6 +128,9 @@ class Settings:
             self.song_length = "snippet"
         if self.faster_downloads not in FASTER_DOWNLOADS:
             self.faster_downloads = "auto"
+        self.bulk_max_posts = clamp_bulk_max(self.bulk_max_posts)
+        if not isinstance(self.bulk_warning_seen, bool):
+            self.bulk_warning_seen = False
 
 
 def default_path() -> Path:
@@ -171,5 +180,8 @@ def apply(settings: Settings, queue: DownloadQueue) -> None:
     queue.set_photo_mode(settings.photo_mode)
     queue.set_song_length(settings.song_length)
     queue.set_reuse_probe(settings.faster_downloads == "auto")
+    set_bulk = getattr(queue, "set_bulk_max_posts", None)  # test doubles may predate brief 10G
+    if callable(set_bulk):
+        set_bulk(settings.bulk_max_posts)
 
 

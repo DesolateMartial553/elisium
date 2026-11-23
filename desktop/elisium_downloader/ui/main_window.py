@@ -49,14 +49,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from elisium_downloader.engine import runner
+from elisium_downloader.engine import media, runner
 from elisium_downloader.engine.queue import DownloadQueue
 
 from . import theme
 from .bridge import QueueBridge
 from .history_page import HistoryPage
-from .playlist_dialog import PlaylistDialog
+from .playlist_dialog import BulkWarningDialog, PlaylistDialog
 from .quality_dialog import QualityDialog
+from . import settings as settings_mod
 from .settings import Settings
 from .settings_page import SettingsPage
 from .sign_in_dialog import SignInDialog
@@ -117,6 +118,11 @@ def extract_urls(text: str) -> tuple[list[str], int]:
         else:
             ignored += 1
     return urls, ignored
+
+
+def _needs_picker(url: str) -> bool:
+    """A playlist, channel, profile, tab or Saved link: the picker decides what is queued."""
+    return runner._looks_like_playlist(url) or media.classify_bulk_url(url) is not None
 
 
 def _links(count: int) -> str:
@@ -1055,7 +1061,7 @@ class MainWindow(QMainWindow):
         Playlist and channel links are never queued here; the caller decides
         when to open the picker for them.
         """
-        playlists = [u for u in urls if runner._looks_like_playlist(u)]
+        playlists = [u for u in urls if _needs_picker(u)]
         added = 0
         known = 0
         for url in urls:
@@ -1157,7 +1163,7 @@ class MainWindow(QMainWindow):
         if len(urls) > 1:
             self.statusBar().showMessage("Options works on one link at a time", 5000)
             return
-        if runner._looks_like_playlist(urls[0]):
+        if _needs_picker(urls[0]):
             self._open_playlist(urls[0])
         else:
             self._open_quality(urls[0])
@@ -1181,11 +1187,33 @@ class MainWindow(QMainWindow):
             self.queue,
             self._probe_fn,
             default_preset_id=self._default_preset_id(),
+            confirm_start=self._confirm_bulk_start,
             parent=self,
         )
         dialog.itemsAdded.connect(self._on_dialog_added)
         self._run_dialog(dialog)
         return dialog
+
+    def _run_warning(self, dialog: QDialog) -> bool:
+        """Show the one-time bulk warning modally; ``True`` for "Start" (tests replace this)."""
+        return dialog.exec() == QDialog.DialogCode.Accepted
+
+    def _confirm_bulk_start(self) -> bool:
+        """The one-time warning before the first bulk save; remembered in settings."""
+        if self.settings.bulk_warning_seen:
+            return True
+        dialog = BulkWarningDialog(self)
+        if not self._run_warning(dialog):
+            return False
+        self.settings.bulk_warning_seen = True
+        # The Settings page keeps its own copy and rewrites the file on every change.
+        self.settings_page.settings.bulk_warning_seen = True
+        if self._settings_path is not None:
+            try:
+                settings_mod.save(self.settings, self._settings_path)
+            except OSError:
+                pass
+        return True
 
     def _on_dialog_added(self, results: list) -> None:
         added = known = 0

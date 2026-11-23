@@ -265,7 +265,16 @@ def describe_row(row: dict[str, Any], now: float | None = None) -> RowText:
     files_total = progress.get("files_total")
     # "YouTube · 1080p MP4 · 648.5 MB", "Instagram · 6 photos + song · 3 of 7 files"
     meta_parts = [site_name(row.get("url")), row.get("format_label") or ""]
-    if files_total:
+    bulk = row.get("bulk")
+    if bulk:
+        # Brief 10G, "Instagram · @user · 12 of 50 posts": the count is POSTS (the files
+        # inside the current post stay out of the headline).
+        meta_parts.append(bulk.get("label") or "")
+        done = progress.get("files_done") or 0
+        if files_total:
+            noun = "post" if files_total == 1 else "posts"
+            meta_parts.append(f"{files_total} {noun}" if state in ("done", "skipped") else f"{done} of {files_total} posts")
+    elif files_total:
         done = progress.get("files_done") or 0
         meta_parts.append(f"{files_total} files" if state in ("done", "skipped") else f"{done} of {files_total} files")
     elif size:
@@ -466,6 +475,10 @@ class DownloadModel(QAbstractTableModel):
         elif state in ("failed", "skipped") and row.get("error"):
             error = row["error"]
             parts.append(f"{error['message']} {error['fix']}".strip())
+        if row.get("bulk") and progress.get("files_total") and state not in ("done", "skipped"):
+            parts.append(f"{progress.get('files_done') or 0} of {progress['files_total']} posts")
+        if state == "paused" and row.get("note"):
+            parts.append(row["note"])
         return ", ".join(parts)
 
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
