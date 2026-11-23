@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -187,7 +188,7 @@ fun InstagramLoginScreen(
             }
             val webViewName = stringResource(R.string.instagram_login_webview)
             // No clip() on the WebView: a rounded clip forces an off-screen layer that some devices render blank.
-            Box(Modifier.fillMaxWidth().weight(1f).padding(horizontal = 12.dp)) {
+            Box(Modifier.fillMaxWidth().weight(1f).padding(horizontal = 12.dp).navigationBarsPadding()) {
                 AndroidView(
                     factory = { context ->
                         WebView(context).apply {
@@ -196,6 +197,10 @@ fun InstagramLoginScreen(
                             contentDescription = webViewName
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
+                            // Instagram shows an empty page to browsers it recognises as embedded.
+                            settings.userAgentString = browserLikeUserAgent(settings.userAgentString)
+                            CookieManager.getInstance().setAcceptCookie(true)
+                            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                             keepPageLight(this)
                             webViewClient = object : WebViewClient() {
                                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =

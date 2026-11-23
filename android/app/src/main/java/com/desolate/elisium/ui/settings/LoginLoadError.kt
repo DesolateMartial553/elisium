@@ -34,3 +34,10 @@ fun loginHttpReason(status: Int): String = when {
 
 /** True when an HTTP status on the main frame should show the "did not load" message. */
 fun loginHttpIsFailure(status: Int): Boolean = status >= 400
+
+/**
+ * The WebView's own user agent made to look like plain mobile Chrome: Instagram serves an empty page to
+ * embedded browsers it spots by the `; wv` marker (and the old `Version/4.0` token), so both are removed.
+ */
+fun browserLikeUserAgent(webViewAgent: String): String =
+    webViewAgent.replace("; wv", "").replace(Regex(" Version/\\d+(\\.\\d+)*"), "")
