@@ -39,7 +39,16 @@ class UrlConnectionTransport : HttpTransport {
     override fun get(url: String, headers: Map<String, String>, token: CancelToken): HttpResult {
         val conn = open(url, headers, token)
         try {
-            val code = conn.responseCode
+            val code = try {
+                conn.responseCode
+            } catch (e: IOException) {
+                // Android's HttpURLConnection throws this (instead of returning 401) when a 401 carries no
+                // WWW-Authenticate header, which is exactly what Instagram sends to a signed-out client.
+                if (e.message?.contains("No authentication challenges found", ignoreCase = true) == true) {
+                    return HttpResult(401, "")
+                }
+                throw e
+            }
             val stream = if (code in 200..299) conn.inputStream else conn.errorStream
             val body = stream?.use { input ->
                 val out = java.io.ByteArrayOutputStream()

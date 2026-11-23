@@ -5,6 +5,49 @@ data class ErrorInfo(val message: String, val fix: String, val code: String)
 
 private val FALLBACK = ErrorInfo("Download failed.", "See Details", "unknown")
 
+private const val CAUSE_MAX = 200
+private const val REMOVED = "[removed]"
+private val HEADER_LINE = Regex("(?i)\\b(set-cookie|cookie|authorization|proxy-authorization|x-csrftoken)\\s*[:=][^\\n]*")
+private val SECRET_PAIR = Regex(
+    "(?i)\\b(sessionid|csrftoken|ds_user_id|ig_did|mid|rur|datr|sid|token|access_token|auth\\w*|password|secret)\\s*[=:]\\s*[^\\s;,&\"']+",
+)
+private val COOKIE_TAB = Regex("(?i)\\b(sessionid|csrftoken|ds_user_id|ig_did|mid|rur|datr|sid)\\t[^\\t\\n]*")
+private val BEARER = Regex("(?i)\\b(bearer|basic)\\s+[A-Za-z0-9._~+/=-]+")
+private val LONG_TOKEN = Regex("[A-Za-z0-9%_-]{32,}")
+
+/**
+ * A short, safe description of why something failed, for the item's Details line: the exception class
+ * name plus its message, with anything that looks like a cookie value, a Cookie/Authorization header
+ * or a long opaque token removed, whitespace collapsed and the whole text cut to 200 characters.
+ */
+fun sanitizeCause(error: Throwable): String =
+    sanitizeCauseText("${error.javaClass.simpleName.ifEmpty { "Error" }}: ${error.message.orEmpty()}")
+
+/** The same cleaning for plain text (a yt-dlp error line): redact, collapse, truncate to 200 characters. */
+fun sanitizeCauseText(text: String?): String {
+    var out = COOKIE_TAB.replace(text ?: "", "$1 $REMOVED").replace('\t', ' ')
+    out = HEADER_LINE.replace(out, REMOVED)
+    out = SECRET_PAIR.replace(out) { "${it.groupValues[1]}=$REMOVED" }
+    out = BEARER.replace(out, REMOVED)
+    out = LONG_TOKEN.replace(out, REMOVED)
+    out = out.replace(Regex("\\s+"), " ").trim()
+    return if (out.length > CAUSE_MAX) out.take(CAUSE_MAX - 3).trimEnd() + "..." else out
+}
+
+/** The last non-blank line of a log, for a Details line (the final `ERROR:` line is the useful one). */
+fun lastLogLine(log: String?): String =
+    (log ?: "").lineSequence().map { it.trim() }.lastOrNull { it.isNotEmpty() }.orEmpty()
+
+/**
+ * Keeps the user wording and the `unknown` code, and adds the sanitised cause to the line the row shows
+ * after the message ("Download failed. See Details: IllegalStateException: ..."). A blank [cause] changes nothing.
+ */
+fun withCause(info: ErrorInfo, cause: String?): ErrorInfo {
+    if (info.code != "unknown") return info
+    val clean = sanitizeCauseText(cause)
+    return if (clean.isEmpty()) info else info.copy(fix = "${info.fix}: $clean")
+}
+
 // Instagram wording (used when there is no URL to judge, or it is Instagram).
 internal val IG_SIGNED_IN = ErrorInfo(
     "Instagram needs you signed in.",
@@ -56,6 +99,13 @@ private val TABLE: List<Pair<List<String>, ErrorInfo>> = listOf(
         "log in to view this content",
         "you must be logged in to view",
         "instagram needs you signed in",
+    ) to IG_SIGNED_IN,
+    // yt-dlp wording for an anonymous request that Instagram sent to its login page.
+    listOf(
+        "redirected to the login page",
+        "rate-limit for accessing posts anonymously",
+        "only available for registered users",
+        "rate-limit reached or login required",
     ) to IG_SIGNED_IN,
     // Instagram's own pacing message, not a plain HTTP 429.
     listOf("please wait a few minutes", "instagram is limiting", "request limit reached") to IG_RATE,

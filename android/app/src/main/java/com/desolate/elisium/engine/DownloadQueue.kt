@@ -570,11 +570,12 @@ class DownloadQueue(
         } catch (c: CancellationException) {
             lock.withLock { e.handle }?.cancel()
             throw c
-        } catch (_: Exception) {
+        } catch (x: Exception) {
+            val unknown = withCause(UNKNOWN, sanitizeCause(x))
             lock.withLock {
                 if (e.state in ACTIVE_STATES || e.state == "queued") {
-                    e.error = UNKNOWN
-                    setState(e, "failed", error = UNKNOWN)
+                    e.error = unknown
+                    setState(e, "failed", error = unknown)
                 }
             }
         } finally {
@@ -619,11 +620,11 @@ class DownloadQueue(
             probedAt = clock()
         } catch (f: ProbeFailure) {
             // Same wording rules as a failed download: the site, not "Instagram".
-            error = explain(f.errorText, e.url, activeCookiesFile() != null)
+            error = withCause(explain(f.errorText, e.url, activeCookiesFile() != null), lastLogLine(f.errorText.ifBlank { f.raw }))
         } catch (c: CancellationException) {
             throw c
-        } catch (_: Exception) {
-            error = UNKNOWN
+        } catch (x: Exception) {
+            error = withCause(UNKNOWN, sanitizeCause(x))
         }
         if (info != null) {
             learnArchiveKey(e, info)
@@ -665,8 +666,9 @@ class DownloadQueue(
             error = download(e, info, probedAt)
         }
         if (error == null) return null
-        if (error.code == "no_media" && routeOf(e) == MediaRoute.YTDLP_THEN_MEDIA) {
-            // yt-dlp found no video in the post: the same attempt re-runs once on the media engine (no retry counted).
+        if ((error.code == "no_media" || error.code == "unknown") && routeOf(e) == MediaRoute.YTDLP_THEN_MEDIA) {
+            // yt-dlp found no video in the post (or failed in a way it cannot name, which on a photo post is
+            // usually Instagram's sign-in wall): the same attempt re-runs once on the media engine (no retry counted).
             val switched = lock.withLock {
                 if (running && e.state in ACTIVE_STATES) {
                     e.mediaOnly = true
@@ -750,8 +752,8 @@ class DownloadQueue(
         } catch (c: CancellationException) {
             cancelToken.cancel()
             throw c
-        } catch (_: Exception) {
-            MediaOutcome.Failed(UNKNOWN)
+        } catch (x: Exception) {
+            MediaOutcome.Failed(withCause(UNKNOWN, sanitizeCause(x)))
         }
 
         var ref: StageRef? = null
@@ -944,13 +946,13 @@ class DownloadQueue(
             }
         } catch (c: CancellationException) {
             throw c
-        } catch (_: Exception) {
+        } catch (x: Exception) {
             lock.withLock {
                 e.handle = null
                 e.token = null
                 if (e.state == "paused" || e.state == "cancelled") return null
             }
-            return UNKNOWN
+            return withCause(UNKNOWN, sanitizeCause(x))
         }
 
         // 0 = carry on, 1 = leave it (paused, or already re-queued by a quick resume), 2 = cancelled.
@@ -1026,7 +1028,7 @@ class DownloadQueue(
         }
         run.processFailed = true
         run.errorLog = outcome.errorLog
-        return explain(outcome.errorLog, e.url, cookies != null)
+        return withCause(explain(outcome.errorLog, e.url, cookies != null), lastLogLine(outcome.errorLog))
     }
 
     private fun onProgress(e: Entry, token: Any, p: Progress) {

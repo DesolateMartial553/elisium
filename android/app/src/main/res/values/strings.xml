@@ -173,6 +173,10 @@
     <string name="instagram_login_title">Sign in to Instagram</string>
     <string name="instagram_login_back">Back</string>
     <string name="instagram_login_explainer">You sign in on Instagram\'s own page. Elisium never sees your password; it only keeps the session on this phone. If you download a lot, use a spare account.</string>
+    <string name="instagram_login_loading">Loading...</string>
+    <string name="instagram_login_load_failed">Instagram\'s sign-in page did not load (%1$s). Check your connection.</string>
+    <string name="instagram_login_retry">Retry</string>
+    <string name="instagram_login_webview">Instagram sign-in page</string>
 
     <!-- Permissions -->
     <string name="perm_notifications_reason">Elisium can tell you when your downloads are done, even if you have left the app. Allow notifications to get that. Downloads work either way.</string>

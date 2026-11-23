@@ -1,13 +1,20 @@
 package com.desolate.elisium.ui.settings
 
 import android.annotation.SuppressLint
+import android.graphics.Bitmap
+import android.graphics.Color as AndroidColor
+import android.os.Build
 import android.view.ViewGroup
 import android.webkit.CookieManager
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,6 +27,7 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -28,13 +36,17 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -53,6 +65,13 @@ private const val COOKIE_ORIGIN = "https://www.instagram.com"
 
 /** How often the cookie store is checked while the screen is shown. */
 private const val SESSION_POLL_MS = 1_000L
+
+/** Where the sign-in page is: still loading, shown, or failed with a short reason. */
+private sealed interface PageState {
+    data object Loading : PageState
+    data object Shown : PageState
+    data class Failed(val reason: String) : PageState
+}
 
 /** Holds the live [WebView] so the poll and the disposal can reach it without a recomposition. */
 private class WebViewHolder {
@@ -79,6 +98,7 @@ fun InstagramLoginScreen(
     val holder = remember { WebViewHolder() }
     val sessionNow = rememberUpdatedState(onSession)
     val closeNow = rememberUpdatedState(onClose)
+    var page by remember { mutableStateOf<PageState>(PageState.Loading) }
 
     // Reads the app's cookie store only: no script is injected and the page is never inspected.
     val check: (WebView) -> Unit = { view ->
@@ -140,24 +160,75 @@ fun InstagramLoginScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
             )
-            AndroidView(
-                factory = { context ->
-                    WebView(context).apply {
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        webViewClient = object : WebViewClient() {
-                            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
-                                !loginHostAllowed(request.url?.toString())
+            if (page is PageState.Loading) {
+                Text(
+                    text = stringResource(R.string.instagram_login_loading),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp)
+                        .semantics { liveRegion = LiveRegionMode.Polite },
+                )
+            }
+            val failed = page as? PageState.Failed
+            if (failed != null) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)) {
+                    Text(
+                        text = stringResource(R.string.instagram_login_load_failed, failed.reason),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive },
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = {
+                        page = PageState.Loading
+                        holder.view?.loadUrl(LOGIN_URL)
+                    }) { Text(stringResource(R.string.instagram_login_retry)) }
+                }
+            }
+            val webViewName = stringResource(R.string.instagram_login_webview)
+            // No clip() on the WebView: a rounded clip forces an off-screen layer that some devices render blank.
+            Box(Modifier.fillMaxWidth().weight(1f).padding(horizontal = 12.dp)) {
+                AndroidView(
+                    factory = { context ->
+                        WebView(context).apply {
+                            // An opaque white page: a transparent WebView over the dark app theme looks like an empty box.
+                            setBackgroundColor(AndroidColor.WHITE)
+                            contentDescription = webViewName
+                            settings.javaScriptEnabled = true
+                            settings.domStorageEnabled = true
+                            keepPageLight(this)
+                            webViewClient = object : WebViewClient() {
+                                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
+                                    !loginHostAllowed(request.url?.toString())
 
-                            override fun onPageFinished(view: WebView, url: String?) = check(view)
+                                override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
+                                    if (page !is PageState.Failed) page = PageState.Loading
+                                }
+
+                                override fun onPageFinished(view: WebView, url: String?) {
+                                    if (page !is PageState.Failed) page = PageState.Shown
+                                    check(view)
+                                }
+
+                                override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                                    if (request.isForMainFrame) {
+                                        page = PageState.Failed(loginErrorReason(error.errorCode, error.description))
+                                    }
+                                }
+
+                                override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, errorResponse: WebResourceResponse) {
+                                    if (request.isForMainFrame && loginHttpIsFailure(errorResponse.statusCode)) {
+                                        page = PageState.Failed(loginHttpReason(errorResponse.statusCode))
+                                    }
+                                }
+                            }
+                            holder.view = this
+                            loadUrl(LOGIN_URL)
                         }
-                        holder.view = this
-                        loadUrl(LOGIN_URL)
-                    }
-                },
-                modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 12.dp)
-                    .clip(MaterialTheme.shapes.medium),
-            )
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
             Spacer(Modifier.height(8.dp))
         }
     }
@@ -171,4 +242,14 @@ private fun clearSignIn(view: WebView) {
     WebStorage.getInstance().deleteAllData()
     view.clearCache(true)
     view.stopLoading()
+}
+
+/** Keeps Instagram's own page as it is: no forced or algorithmic dark mode on top of it. */
+@Suppress("DEPRECATION")
+private fun keepPageLight(view: WebView) {
+    if (Build.VERSION.SDK_INT >= 33) {
+        view.settings.isAlgorithmicDarkeningAllowed = false
+    } else if (Build.VERSION.SDK_INT >= 29) {
+        view.settings.forceDark = WebSettings.FORCE_DARK_OFF
+    }
 }
